@@ -1,0 +1,1216 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Galaxian - Top 10 e Historial Completo</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #0d0d0d;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            color: #fff;
+            font-family: 'Courier New', Courier, monospace;
+            overflow: hidden;
+            user-select: none;
+        }
+        .game-container {
+            position: relative;
+            text-align: center;
+        }
+        canvas {
+            background-color: #000;
+            border: 4px solid #222;
+            box-shadow: 0 0 25px rgba(255, 0, 128, 0.25);
+        }
+        .instructions {
+            margin-top: 10px;
+            font-size: 13px;
+            color: #777;
+        }
+        #firebase-modal {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(22, 27, 34, 0.95);
+            border: 2px solid #58a6ff;
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
+            z-index: 10;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.8);
+            font-family: Arial, sans-serif;
+            color: #fff;
+        }
+        #firebase-modal input {
+            background-color: #0d1117;
+            border: 1px solid #30363d;
+            color: #fff;
+            font-size: 18px;
+            text-align: center;
+            width: 80px;
+            padding: 5px;
+            border-radius: 4px;
+            text-transform: uppercase;
+            margin: 10px 0;
+        }
+        #firebase-modal button {
+            background-color: #238636;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        #firebase-modal button:hover {
+            background-color: #2ea043;
+        }
+    </style>
+</head>
+<body>
+
+<div class="game-container">
+    <canvas id="gameCanvas" width="480" height="640"></canvas>
+    <div class="instructions">
+        Mover: <b>Flechas Izq/Der</b> o <b>A/D</b> | Disparar: <b>Espacio</b> | Pantallas: <b>TAB</b>
+    </div>
+
+    <div id="firebase-modal">
+        <h3 style="margin:0 0 10px 0; color:#58a6ff;">¡NUEVA PUNTUACIÓN!</h3>
+        <p style="font-size:13px; margin:5px 0;">Introduce tus iniciales (máx 3):</p>
+        <input type="text" id="input-iniciales" maxlength="3" autocomplete="off" />
+        <br>
+        <button id="btn-guardar-score">Guardar Puntuación</button>
+    </div>
+</div>
+
+<script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+    import { getFirestore, collection, addDoc, getDocs, query, orderBy, limit, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+    const firebaseConfig = {
+        apiKey: "AIzaSyC-dctgL8ugJg6bAYzZUUcN_QvIUdlNEjI",
+        authDomain: "mi-arcade.firebaseapp.com",
+        projectId: "mi-arcade",
+        storageBucket: "mi-arcade.firebasestorage.app",
+        messagingSenderId: "483727672543",
+        appId: "1:483727672543:web:ff23857fc21d5adfb0d56a",
+        measurementId: "G-B5MSMGVMBM"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    const modalFirebase = document.getElementById("firebase-modal");
+    const inputIniciales = document.getElementById("input-iniciales");
+    const btnGuardarScore = document.getElementById("btn-guardar-score");
+
+    let scoreYaGuardadoEnPartida = false;
+    let topRankingGlobal = [];
+    let historialGlobal = [];
+
+    async function cargarTopRanking() {
+        try {
+            const q = query(collection(db, "puntuaciones_galaxian"), orderBy("puntos", "desc"), limit(10));
+            const querySnapshot = await getDocs(q);
+            topRankingGlobal = [];
+            querySnapshot.forEach((doc) => { topRankingGlobal.push(doc.data()); });
+        } catch (e) {
+            console.error("Error al cargar el Top 10 de Galaxian: ", e);
+            topRankingGlobal = [{ iniciales: "ERR", puntos: 0 }];
+        }
+    }
+
+    async function cargarHistorialCompleto() {
+        try {
+            const q = query(collection(db, "puntuaciones_galaxian"), orderBy("fecha", "desc"), limit(100));
+            const querySnapshot = await getDocs(q);
+            historialGlobal = [];
+            querySnapshot.forEach((doc) => { historialGlobal.push(doc.data()); });
+        } catch (e) {
+            console.error("Error al cargar el historial de Galaxian: ", e);
+            historialGlobal = [];
+        }
+    }
+
+    async function actualizarDatosFirestore() {
+        await Promise.all([cargarTopRanking(), cargarHistorialCompleto()]);
+    }
+    actualizarDatosFirestore();
+
+    btnGuardarScore.addEventListener("click", async () => {
+        let iniciales = inputIniciales.value.trim().toUpperCase();
+        if (!iniciales) iniciales = "AAA";
+        try {
+            await addDoc(collection(db, "puntuaciones_galaxian"), {
+                iniciales: iniciales,
+                puntos: score,
+                fecha: serverTimestamp()
+            });
+            modalFirebase.style.display = "none";
+            inputIniciales.value = "";
+            await actualizarDatosFirestore();
+        } catch (e) {
+            console.error("Error al guardar: ", e);
+            alert("Hubo un error al guardar tu puntuación.");
+        }
+    });
+
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+
+    // --- AUDIO CON WEB AUDIO API ---
+    let audioCtx = null;
+
+    function initAudio() {
+        if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+    }
+
+    function playSound(type) {
+        if (!audioCtx) return;
+        try {
+            let osc = audioCtx.createOscillator();
+            let gain = audioCtx.createGain();
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+
+            let now = audioCtx.currentTime;
+
+            if (type === 'shoot') {
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(600, now);
+                osc.frequency.exponentialRampToValueAtTime(150, now + 0.15);
+                gain.gain.setValueAtTime(0.15, now);
+                gain.gain.linearRampToValueAtTime(0.01, now + 0.15);
+                osc.start(now);
+                osc.stop(now + 0.15);
+            } else if (type === 'explosion') {
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(120, now);
+                osc.frequency.linearRampToValueAtTime(30, now + 0.25);
+                gain.gain.setValueAtTime(0.2, now);
+                gain.gain.linearRampToValueAtTime(0.01, now + 0.25);
+                osc.start(now);
+                osc.stop(now + 0.25);
+            } else if (type === 'dive') {
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(300, now);
+                osc.frequency.linearRampToValueAtTime(700, now + 0.2);
+                gain.gain.setValueAtTime(0.1, now);
+                gain.gain.linearRampToValueAtTime(0.01, now + 0.2);
+                osc.start(now);
+                osc.stop(now + 0.2);
+            }
+        } catch (e) {}
+    }
+
+    // --- ESTADOS DEL JUEGO ---
+    const STATE_START = 0;
+    const STATE_PLAYING = 1;
+    const STATE_WAVE_CLEAR = 2;
+    const STATE_GAMEOVER = 3;
+
+    let gameState = STATE_START;
+    let estadoPantalla = 0; // 0: Juego, 1: Top 10, 2: Historial Completo
+    let score = 0;
+    let highScore = localStorage.getItem("galaxian_highscore") || 0;
+    let lives = 3;
+    let wave = 1;
+    let blinkTimer = 0;
+
+    // --- CAMPO DE ESTRELLAS ---
+    const stars = [];
+    for (let i = 0; i < 60; i++) {
+        stars.push({
+            x: Math.random() * canvas.width,
+            y: Math.random() * canvas.height,
+            speed: Math.random() * 1.5 + 0.5,
+            size: Math.random() * 1.5 + 0.5,
+            brightness: Math.random()
+        });
+    }
+
+    function updateAndDrawStars() {
+        ctx.fillStyle = "#000";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        for (let i = 0; i < stars.length; i++) {
+            let s = stars[i];
+            s.y += s.speed;
+            if (s.y > canvas.height) {
+                s.y = 0;
+                s.x = Math.random() * canvas.width;
+            }
+            ctx.fillStyle = `rgba(255, 255, 255, ${s.brightness})`;
+            ctx.fillRect(s.x, s.y, s.size, s.size);
+        }
+    }
+
+    // --- JUGADOR ---
+    const player = {
+        x: canvas.width / 2 - 15,
+        y: canvas.height - 50,
+        width: 30,
+        height: 20,
+        speed: 5,
+        dx: 0
+    };
+
+    // --- PROYECTIL ---
+    let bullet = {
+        x: 0,
+        y: 0,
+        width: 4,
+        height: 12,
+        speed: 8,
+        active: false
+    };
+
+    const enemyBullets = [];
+    const particles = [];
+    const floatingTexts = [];
+
+    function addExplosion(x, y, color, count = 12) {
+        playSound('explosion');
+        for (let i = 0; i < count; i++) {
+            let angle = Math.random() * Math.PI * 2;
+            let speed = Math.random() * 3.5 + 1;
+            particles.push({
+                x: x,
+                y: y,
+                vx: Math.cos(angle) * speed,
+                vy: Math.sin(angle) * speed,
+                color: color,
+                alpha: 1.0,
+                decay: Math.random() * 0.03 + 0.02
+            });
+        }
+    }
+
+    function addFloatingText(text, x, y, color = "#FFFF00") {
+        floatingTexts.push({
+            text: text,
+            x: x,
+            y: y,
+            alpha: 1.0,
+            color: color
+        });
+    }
+
+    // --- ENEMIGOS ---
+    const alienRows = 5;
+    const maxCols = 10;
+    const aliens = [];
+    const alienWidth = 26;
+    const alienHeight = 20;
+    const alienPaddingX = 8;
+    const alienPaddingY = 10;
+    const alienOffsetTop = 75;
+    const alienOffsetLeft = 55;
+
+    let alienDirection = 1;
+    let baseAlienSpeed = 0.25; 
+    const alienDropDistance = 10;
+
+    const alienRowConfigs = [
+        { color: "#FFCC00", isFlagship: true, points: 150 }, 
+        { color: "#FF3333", isFlagship: false, points: 60 },  
+        { color: "#CC00FF", isFlagship: false, points: 50 },  
+        { color: "#00FFFF", isFlagship: false, points: 40 },  
+        { color: "#00FFFF", isFlagship: false, points: 30 }   
+    ];
+
+    let diveTimer = 0;
+    let diveInterval = 190; 
+    let consecutiveDiveKills = 0;
+
+    let formationAnchorX = alienOffsetLeft;
+    let formationAnchorY = alienOffsetTop;
+
+    function initAliens() {
+        aliens.length = 0;
+        enemyBullets.length = 0;
+        particles.length = 0;
+        floatingTexts.length = 0;
+        consecutiveDiveKills = 0;
+
+        formationAnchorX = alienOffsetLeft;
+        formationAnchorY = alienOffsetTop;
+        alienDirection = 1;
+        diveTimer = 0;
+
+        const rowLayouts = [
+            [4, 5],                 // Fila 0
+            [3, 4, 5, 6],           // Fila 1
+            [2, 3, 4, 5, 6, 7],     // Fila 2
+            [1, 2, 3, 4, 5, 6, 7, 8],     // Fila 3
+            [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] // Fila 4
+        ];
+
+        for (let r = 0; r < alienRows; r++) {
+            let activeColsInRow = rowLayouts[r];
+            let config = alienRowConfigs[r];
+
+            for (let c = 0; c < maxCols; c++) {
+                if (activeColsInRow.includes(c)) {
+                    let isFlagship = config.isFlagship; 
+                    let extraHealth = (wave >= 3 && r >= 2) ? 1 : 0;
+                    let health = (isFlagship ? 2 : 1) + extraHealth;
+                    let color = config.color;
+
+                    let baseX = alienOffsetLeft + c * (alienWidth + alienPaddingX);
+                    let baseY = alienOffsetTop + r * (alienHeight + alienPaddingY);
+
+                    aliens.push({
+                        x: baseX,
+                        y: baseY,
+                        width: alienWidth,
+                        height: alienHeight,
+                        color: color,
+                        status: 1, 
+                        isFlagship: isFlagship,
+                        points: config.points + ((wave - 1) * 10),
+                        row: r,
+                        col: c,
+                        health: health,
+                        maxHealth: health,
+                        baseOffsetX: c * (alienWidth + alienPaddingX),
+                        baseOffsetY: r * (alienHeight + alienPaddingY),
+                        diveX: 0,
+                        diveY: 0,
+                        diveVX: 0,
+                        diveVY: 0,
+                        angle: 0,
+                        squadState: 0,
+                        hasFired: false,
+                        cooldown: 0
+                    });
+                }
+            }
+        }
+    }
+
+    initAliens();
+
+    // --- CONTROLES ---
+    const keys = {};
+
+    window.addEventListener("keydown", (e) => {
+        initAudio();
+
+        if (modalFirebase.style.display === "block") {
+            if (e.key === "Enter") {
+                btnGuardarScore.click();
+            }
+            return;
+        }
+
+        if (e.code === "Tab") {
+            e.preventDefault();
+            estadoPantalla = (estadoPantalla + 1) % 3;
+            return;
+        }
+
+        if (estadoPantalla !== 0) {
+            estadoPantalla = 0;
+        }
+
+        keys[e.code] = true;
+
+        if (e.code === "Space") {
+            if (gameState === STATE_START) {
+                startGame();
+                e.preventDefault();
+            } else if (gameState === STATE_PLAYING && estadoPantalla === 0 && !bullet.active) {
+                bullet.x = player.x + player.width / 2 - bullet.width / 2;
+                bullet.y = player.y;
+                bullet.active = true;
+                playSound('shoot');
+                e.preventDefault();
+            }
+        }
+
+        if (gameState === STATE_GAMEOVER && (e.code === "KeyR" || e.code === "Space")) {
+            // Se maneja tras la inserción en Firebase o al reiniciar
+        }
+    });
+
+    window.addEventListener("keyup", (e) => {
+        keys[e.code] = false;
+    });
+
+    function startGame() {
+        modalFirebase.style.display = "none";
+        scoreYaGuardadoEnPartida = false;
+        score = 0;
+        lives = 3;
+        wave = 1;
+        baseAlienSpeed = 0.25;
+        diveInterval = 190;
+        initAliens();
+        player.x = canvas.width / 2 - 15;
+        bullet.active = false;
+        gameState = STATE_PLAYING;
+        estadoPantalla = 0;
+        actualizarDatosFirestore();
+    }
+
+    function nextWave() {
+        wave++;
+        baseAlienSpeed = Math.min(0.55, 0.25 + (wave - 1) * 0.05);
+        diveInterval = Math.max(120, 190 - (wave - 1) * 15);
+        initAliens();
+        player.x = canvas.width / 2 - 15;
+        bullet.active = false;
+        gameState = STATE_PLAYING;
+    }
+
+    function updatePlayer() {
+        if (estadoPantalla !== 0) return;
+        player.dx = 0;
+        if (keys["ArrowLeft"] || keys["KeyA"]) {
+            player.dx = -player.speed;
+        }
+        if (keys["ArrowRight"] || keys["KeyD"]) {
+            player.dx = player.speed;
+        }
+
+        player.x += player.dx;
+
+        if (player.x < 0) {
+            player.x = 0;
+        } else if (player.x + player.width > canvas.width) {
+            player.x = canvas.width - player.width;
+        }
+    }
+
+    function updateBullet() {
+        if (bullet.active && estadoPantalla === 0) {
+            bullet.y -= bullet.speed;
+            if (bullet.y < 0) {
+                bullet.active = false;
+            }
+        }
+    }
+
+    function updateEnemyBullets() {
+        for (let i = enemyBullets.length - 1; i >= 0; i--) {
+            let eb = enemyBullets[i];
+            eb.x += eb.vx;
+            eb.y += eb.vy;
+
+            if (eb.y > canvas.height || eb.x < 0 || eb.x > canvas.width) {
+                enemyBullets.splice(i, 1);
+            }
+        }
+    }
+
+    function updateParticlesAndTexts() {
+        for (let i = particles.length - 1; i >= 0; i--) {
+            let p = particles[i];
+            p.x += p.vx;
+            p.y += p.vy;
+            p.alpha -= p.decay;
+            if (p.alpha <= 0) particles.splice(i, 1);
+        }
+
+        for (let i = floatingTexts.length - 1; i >= 0; i--) {
+            let ft = floatingTexts[i];
+            ft.y -= 0.8;
+            ft.alpha -= 0.02;
+            if (ft.alpha <= 0) floatingTexts.splice(i, 1);
+        }
+    }
+
+    let waveClearTimer = 0;
+
+    function updateAliens() {
+        let totalAliensOriginal = 32; 
+        let aliveAliens = aliens.filter(a => a.status > 0);
+        
+        if (aliveAliens.length === 0) {
+            gameState = STATE_WAVE_CLEAR;
+            waveClearTimer = 0;
+            return;
+        }
+
+        let deadCount = totalAliensOriginal - aliveAliens.length;
+        let currentSpeed = baseAlienSpeed + (Math.max(0, deadCount) * (0.003 + wave * 0.001));
+
+        for (let i = 0; i < aliens.length; i++) {
+            if (aliens[i].status === 1 && aliens[i].cooldown > 0) {
+                aliens[i].cooldown--;
+            }
+        }
+
+        formationAnchorX += currentSpeed * alienDirection;
+
+        let touchEdge = false;
+        for (let i = 0; i < aliens.length; i++) {
+            let a = aliens[i];
+            if (a.status === 1) {
+                let currentAbsoluteX = formationAnchorX + a.baseOffsetX;
+                if ((currentAbsoluteX + a.width >= canvas.width - 15 && alienDirection > 0) || 
+                    (currentAbsoluteX <= 15 && alienDirection < 0)) {
+                    touchEdge = true;
+                }
+            }
+        }
+
+        if (touchEdge) {
+            alienDirection *= -1;
+            formationAnchorY += alienDropDistance;
+        }
+
+        for (let i = 0; i < aliens.length; i++) {
+            let a = aliens[i];
+            if (a.status === 1) {
+                a.x = formationAnchorX + a.baseOffsetX;
+                a.y = formationAnchorY + a.baseOffsetY;
+            }
+        }
+
+        if (aliveAliens.length <= 3) {
+            for (let i = 0; i < aliens.length; i++) {
+                let a = aliens[i];
+                if (a.status > 0) {
+                    if (a.status === 1) {
+                        a.status = 2;
+                        a.diveX = a.x;
+                        a.diveY = a.y;
+                        a.diveVY = 2.2;
+                        a.diveVX = (Math.random() < 0.5 ? 1 : -1) * 1.2;
+                        a.angle = 0;
+                        a.squadState = 2;
+                        a.hasFired = false;
+                    }
+                    
+                    a.angle += 0.03;
+                    a.diveY += a.diveVY;
+                    a.diveX += a.diveVX + Math.sin(a.angle) * 2;
+                    a.x = a.diveX;
+                    a.y = a.diveY;
+
+                    if (a.y > canvas.height + 20) {
+                        a.diveY = -30;
+                        a.diveX = Math.random() * (canvas.width - 100) + 50;
+                        a.hasFired = false;
+                    }
+
+                    let shootChance = 0.008;
+                    if (!a.hasFired && a.y > canvas.height * 0.3 && Math.random() < shootChance) {
+                        a.hasFired = true;
+                        let targetX = player.x + player.width / 2 + (Math.random() * 100 - 50);
+                        let targetY = player.y + player.height / 2;
+                        let angleToTarget = Math.atan2(targetY - a.y, targetX - (a.x + a.width / 2));
+                        let bulletSpeed = 3.5 + (wave * 0.3);
+                        enemyBullets.push({
+                            x: a.x + a.width / 2 - 2,
+                            y: a.y + a.height,
+                            width: 4,
+                            height: 12,
+                            vx: Math.cos(angleToTarget) * bulletSpeed,
+                            vy: Math.sin(angleToTarget) * bulletSpeed
+                        });
+                    }
+                    if (a.y > canvas.height * 0.7) {
+                        a.hasFired = false;
+                    }
+                }
+            }
+            return;
+        }
+
+        diveTimer++;
+        if (diveTimer >= diveInterval) {
+            diveTimer = 0;
+            triggerGroupDiveAttack();
+        }
+
+        for (let i = 0; i < aliens.length; i++) {
+            let a = aliens[i];
+            if (a.status === 2) {
+                let splitYThreshold = canvas.height * 0.45; 
+
+                if (a.squadState === 1) {
+                    a.diveY += a.diveVY;
+                    a.diveX += a.diveVX; 
+                    a.x = a.diveX;
+                    a.y = a.diveY;
+
+                    if (a.y >= splitYThreshold) {
+                        a.squadState = 2;
+                        a.angle = 0;
+                        let targetX = player.x + player.width / 2;
+                        a.diveVX = (targetX > a.x) ? Math.random() * 2 + 1 : -(Math.random() * 2 + 1);
+                    }
+                } else if (a.squadState === 2) {
+                    a.angle += 0.04;
+                    a.diveY += a.diveVY * 0.75; 
+                    a.diveX += a.diveVX + Math.sin(a.angle) * 2.2;
+
+                    a.x = a.diveX;
+                    a.y = a.diveY;
+
+                    if (a.x < -a.width / 2) { a.x = -a.width / 2; a.diveVX *= -1; }
+                    if (a.x > canvas.width - a.width / 2) { a.x = canvas.width - a.width / 2; a.diveVX *= -1; }
+
+                    let midScreen = canvas.height / 2;
+                    if (!a.hasFired && a.y >= midScreen - 30 && a.y <= midScreen + 50) {
+                        a.hasFired = true;
+                        let randomOffset = (Math.random() * 140 - 70); 
+                        let targetX = player.x + player.width / 2 + randomOffset;
+                        let targetY = player.y + player.height / 2;
+                        let angleToPlayer = Math.atan2(targetY - a.y, targetX - (a.x + a.width / 2));
+                        let bulletSpeed = (3.5 + (wave * 0.3));
+
+                        enemyBullets.push({
+                            x: a.x + a.width / 2 - 2,
+                            y: a.y + a.height,
+                            width: 4,
+                            height: 12,
+                            vx: Math.cos(angleToPlayer) * bulletSpeed,
+                            vy: Math.sin(angleToPlayer) * bulletSpeed
+                        });
+                    }
+                }
+
+                if (a.y > canvas.height + 20) {
+                    a.status = 3; 
+                    a.x = formationAnchorX + a.baseOffsetX;
+                    a.y = -30; 
+                }
+            } else if (a.status === 3) {
+                let targetFormationX = formationAnchorX + a.baseOffsetX;
+                let targetFormationY = formationAnchorY + a.baseOffsetY;
+
+                let dx = targetFormationX - a.x;
+                let dy = targetFormationY - a.y;
+                let dist = Math.hypot(dx, dy);
+
+                if (dist < 4) {
+                    a.status = 1;
+                    a.cooldown = 100; 
+                    consecutiveDiveKills = 0;
+                } else {
+                    a.x += (dx / dist) * 4.5;
+                    a.y += (dy / dist) * 4.5;
+                }
+            }
+        }
+    }
+
+    function triggerGroupDiveAttack() {
+        let eligibleLeaders = [];
+        for (let r = 0; r <= 1; r++) {
+            for (let c = 0; c < maxCols; c++) {
+                let a = aliens.find(al => al.row === r && al.col === c && al.status === 1 && al.cooldown === 0);
+                if (a) eligibleLeaders.push(a);
+            }
+        }
+
+        if (eligibleLeaders.length === 0) {
+            for (let r = 2; r < alienRows; r++) {
+                for (let c = 0; c < maxCols; c++) {
+                    let a = aliens.find(al => al.row === r && al.col === c && al.status === 1 && al.cooldown === 0);
+                    if (a) eligibleLeaders.push(a);
+                }
+                if (eligibleLeaders.length > 0) break;
+            }
+        }
+
+        if (eligibleLeaders.length > 0) {
+            let leader = eligibleLeaders[Math.floor(Math.random() * eligibleLeaders.length)];
+            let groupToDive = [leader];
+
+            let leftEscort = aliens.find(a => a.row === leader.row && a.col === leader.col - 1 && a.status === 1);
+            let rightEscort = aliens.find(a => a.row === leader.row && a.col === leader.col + 1 && a.status === 1);
+
+            if (leftEscort) groupToDive.push(leftEscort);
+            if (rightEscort) groupToDive.push(rightEscort);
+
+            playSound('dive');
+            let targetX = player.x + player.width / 2;
+            let sharedBaseVX = (targetX > leader.x) ? 0.5 : -0.5;
+
+            groupToDive.forEach((ship) => {
+                ship.status = 2;
+                ship.squadState = 1;
+                ship.diveX = ship.x;
+                ship.diveY = ship.y;
+                ship.diveVY = (1.9 + (wave * 0.1)); 
+                ship.diveVX = sharedBaseVX; 
+                ship.hasFired = false;
+            });
+        }
+    }
+
+    function checkCollisions() {
+        if (bullet.active) {
+            for (let i = 0; i < aliens.length; i++) {
+                let a = aliens[i];
+                if (a.status > 0) {
+                    if (
+                        bullet.x < a.x + a.width &&
+                        bullet.x + bullet.width > a.x &&
+                        bullet.y < a.y + a.height &&
+                        bullet.y + bullet.height > a.y
+                    ) {
+                        bullet.active = false;
+                        a.health--;
+
+                        if (a.health > 0) {
+                            addExplosion(a.x + a.width / 2, a.y + a.height / 2, "#FFCC00", 6);
+                            addFloatingText("HIT!", a.x, a.y, "#FFCC00");
+                            break;
+                        }
+
+                        a.status = 0;
+                        let points = a.points;
+
+                        if (a.status === 2 || a.status === 3 || a.y > alienOffsetTop + 30) { 
+                            consecutiveDiveKills++;
+                            let diveBonus = a.isFlagship ? 100 : 50;
+                            points += diveBonus;
+
+                            if (consecutiveDiveKills >= 2) {
+                                let comboMultiplier = Math.min(consecutiveDiveKills, 5);
+                                let comboBonus = comboMultiplier * 50;
+                                points += comboBonus;
+                                addFloatingText(`COMBO x${comboMultiplier} (+${comboBonus})`, a.x - 20, a.y - 10, "#00FFFF");
+                            } else {
+                                addFloatingText(`+${points}`, a.x, a.y, "#00FF00");
+                            }
+                        } else {
+                            addFloatingText(`+${points}`, a.x, a.y, "#FFFFFF");
+                        }
+
+                        score += points;
+                        if (score > highScore) {
+                            highScore = score;
+                            localStorage.setItem("galaxian_highscore", highScore);
+                        }
+
+                        addExplosion(a.x + a.width / 2, a.y + a.height / 2, a.color, 15);
+                        break;
+                    }
+                }
+            }
+        }
+
+        for (let i = enemyBullets.length - 1; i >= 0; i--) {
+            let eb = enemyBullets[i];
+            if (
+                eb.x < player.x + player.width &&
+                eb.x + eb.width > player.x &&
+                eb.y < player.y + player.height &&
+                eb.y + eb.height > player.y
+            ) {
+                enemyBullets.splice(i, 1);
+                lives--;
+                addExplosion(player.x + player.width / 2, player.y + player.height / 2, "#00FF66", 25);
+                resetPlayerPosition();
+                if (lives <= 0) {
+                    gameState = STATE_GAMEOVER;
+                }
+                break;
+            }
+        }
+
+        for (let i = 0; i < aliens.length; i++) {
+            let a = aliens[i];
+            if (a.status > 0) {
+                if (
+                    (a.y + a.height >= 480 && a.status === 1) || 
+                    (a.x < player.x + player.width && a.x + a.width > player.x && a.y < player.y + player.height && a.y + a.height > player.y)
+                ) {
+                    lives--;
+                    addExplosion(player.x + player.width / 2, player.y + player.height / 2, "#00FF66", 25);
+                    
+                    if (a.status === 2 || a.status === 3) {
+                        a.status = 0;
+                        addExplosion(a.x + a.width / 2, a.y + a.height / 2, a.color, 15);
+                    } else {
+                        initAliens();
+                    }
+
+                    resetPlayerPosition();
+                    if (lives <= 0) {
+                        gameState = STATE_GAMEOVER;
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    function resetPlayerPosition() {
+        player.x = canvas.width / 2 - 15;
+        bullet.active = false;
+        enemyBullets.length = 0;
+    }
+
+    function drawStartScreen() {
+        updateAndDrawStars();
+
+        ctx.fillStyle = "#00FFFF";
+        ctx.font = "bold 40px 'Courier New', Courier, monospace";
+        ctx.textAlign = "center";
+        ctx.fillText("GALAXIAN", canvas.width / 2, canvas.height / 2 - 90);
+
+        ctx.fillStyle = "#FF00FF";
+        ctx.font = "15px 'Courier New', Courier, monospace";
+        ctx.fillText("NAMCO ARCADE EDITION 1979", canvas.width / 2, canvas.height / 2 - 50);
+
+        ctx.fillStyle = "#FFCC00";
+        ctx.font = "14px 'Courier New', Courier, monospace";
+        ctx.fillText(`HIGH SCORE: ${highScore}`, canvas.width / 2, canvas.height / 2 - 10);
+
+        blinkTimer++;
+        if (Math.floor(blinkTimer / 30) % 2 === 0) {
+            ctx.fillStyle = "#FFFFFF";
+            ctx.font = "17px 'Courier New', Courier, monospace";
+            ctx.fillText("PRESS SPACE TO PLAY", canvas.width / 2, canvas.height / 2 + 50);
+        }
+
+        ctx.fillStyle = "#58a6ff";
+        ctx.font = "13px 'Courier New'";
+        ctx.fillText("Pulse [TAB] para ver el Top 10 e Historial", canvas.width / 2, canvas.height / 2 + 110);
+
+        ctx.textAlign = "left";
+    }
+
+    function drawWaveClearScreen() {
+        updateAndDrawStars();
+        ctx.fillStyle = "rgba(0, 0, 0, 0.85)";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.fillStyle = "#00FF00";
+        ctx.font = "30px 'Courier New', Courier, monospace";
+        ctx.textAlign = "center";
+        ctx.fillText(`WAVE ${wave} CLEARED`, canvas.width / 2, canvas.height / 2 - 20);
+
+        ctx.fillStyle = "#FFFFFF";
+        ctx.font = "16px 'Courier New', Courier, monospace";
+        ctx.fillText("Preparando siguiente oleada...", canvas.width / 2, canvas.height / 2 + 20);
+
+        ctx.textAlign = "left";
+
+        waveClearTimer++;
+        if (waveClearTimer > 120) {
+            nextWave();
+        }
+    }
+
+    function drawGameOverScreen() {
+        updateAndDrawStars();
+        ctx.fillStyle = "rgba(0, 0, 0, 0.9)";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.fillStyle = "#FF3333";
+        ctx.font = "35px 'Courier New', Courier, monospace";
+        ctx.textAlign = "center";
+        ctx.fillText("GAME OVER", canvas.width / 2, canvas.height / 2 - 60);
+
+        ctx.fillStyle = "#FFFFFF";
+        ctx.font = "18px 'Courier New', Courier, monospace";
+        ctx.fillText(`PUNTUACIÓN FINAL: ${score}`, canvas.width / 2, canvas.height / 2 - 10);
+        ctx.fillText(`OLEADA ALCANZADA: ${wave}`, canvas.width / 2, canvas.height / 2 + 20);
+
+        blinkTimer++;
+        if (Math.floor(blinkTimer / 30) % 2 === 0) {
+            ctx.fillStyle = "#00FFFF";
+            ctx.font = "16px 'Courier New', Courier, monospace";
+            ctx.fillText("Presiona 'R' o 'Espacio' para Reiniciar", canvas.width / 2, canvas.height / 2 + 80);
+        }
+
+        ctx.textAlign = "left";
+    }
+
+    function drawPlayer() {
+        ctx.fillStyle = "#00FF66";
+        ctx.beginPath();
+        ctx.moveTo(player.x + player.width / 2, player.y);
+        ctx.lineTo(player.x, player.y + player.height);
+        ctx.lineTo(player.x + player.width, player.y + player.height);
+        ctx.closePath();
+        ctx.fill();
+        
+        ctx.fillStyle = "#FFFFFF";
+        ctx.fillRect(player.x + player.width / 2 - 2, player.y + 6, 4, 6);
+    }
+
+    function drawBullets() {
+        if (bullet.active) {
+            ctx.fillStyle = "#FFFFFF";
+            ctx.fillRect(bullet.x, bullet.y, bullet.width, bullet.height);
+        }
+
+        ctx.fillStyle = "#FF3333";
+        for (let i = 0; i < enemyBullets.length; i++) {
+            let eb = enemyBullets[i];
+            ctx.fillRect(eb.x, eb.y, eb.width, eb.height);
+        }
+    }
+
+    function drawAliens() {
+        for (let i = 0; i < aliens.length; i++) {
+            let a = aliens[i];
+            if (a.status > 0) {
+                let baseColor = a.color;
+                
+                if (a.isFlagship && a.health < a.maxHealth) {
+                    baseColor = (Math.floor(Date.now() / 100) % 2 === 0) ? "#FFFFFF" : "#FFCC00";
+                }
+
+                if (a.status === 2 || a.status === 3) {
+                    baseColor = "#FFFFFF"; 
+                }
+
+                ctx.fillStyle = baseColor;
+
+                if (a.isFlagship) {
+                    ctx.fillRect(a.x + 4, a.y + 4, a.width - 8, a.height - 8);
+                    ctx.fillRect(a.x, a.y + 8, a.width, 6);
+                    ctx.fillStyle = "#FF0000";
+                    ctx.fillRect(a.x + 8, a.y, 10, 4);
+                } else if (a.row === 1) {
+                    ctx.fillRect(a.x + 5, a.y + 3, a.width - 10, a.height - 6);
+                    ctx.fillRect(a.x + 2, a.y + 8, a.width - 4, 5);
+                    ctx.fillRect(a.x, a.y + 12, 4, 6);
+                    ctx.fillRect(a.x + a.width - 4, a.y + 12, 4, 6);
+                } else if (a.row === 2) {
+                    ctx.fillRect(a.x + 4, a.y + 3, a.width - 8, a.height - 6);
+                    ctx.fillRect(a.x + 2, a.y + 7, a.width - 4, 7);
+                } else {
+                    ctx.fillRect(a.x + 6, a.y + 2, a.width - 12, a.height - 4);
+                    ctx.fillRect(a.x + 2, a.y + 6, a.width - 4, 8);
+                    ctx.fillStyle = "#000000";
+                    ctx.fillRect(a.x + 6, a.y + a.height - 4, 3, 4);
+                    ctx.fillRect(a.x + a.width - 9, a.y + a.height - 4, 3, 4);
+                }
+
+                ctx.fillStyle = "#000000";
+                ctx.fillRect(a.x + 7, a.y + 6, 2, 2);
+                ctx.fillRect(a.x + a.width - 9, a.y + 6, 2, 2);
+            }
+        }
+    }
+
+    function drawVisualEffects() {
+        for (let i = 0; i < particles.length; i++) {
+            let p = particles[i];
+            ctx.fillStyle = p.color;
+            ctx.globalAlpha = p.alpha;
+            ctx.fillRect(p.x, p.y, 3, 3);
+        }
+        ctx.globalAlpha = 1.0;
+
+        for (let i = 0; i < floatingTexts.length; i++) {
+            let ft = floatingTexts[i];
+            ctx.fillStyle = ft.color;
+            ctx.globalAlpha = ft.alpha;
+            ctx.font = "bold 13px 'Courier New', Courier, monospace";
+            ctx.fillText(ft.text, ft.x, ft.y);
+        }
+        ctx.globalAlpha = 1.0;
+    }
+
+    function drawHUD() {
+        ctx.fillStyle = "#FFFFFF";
+        ctx.font = "15px 'Courier New', Courier, monospace";
+        ctx.fillText(`SCORE: ${score}`, 20, 30);
+        ctx.fillText(`HI: ${highScore}`, canvas.width / 2 - 40, 30);
+        ctx.fillText(`LIVES: ${lives}`, canvas.width - 100, 30);
+        
+        ctx.fillStyle = "#58a6ff";
+        ctx.font = "11px 'Courier New'";
+        ctx.fillText("TAB: Menús", 20, canvas.height - 10);
+    }
+
+    function drawGame() {
+        updateAndDrawStars();
+        drawHUD();
+        drawPlayer();
+        drawBullets();
+        drawAliens();
+        drawVisualEffects();
+    }
+
+    function dibujarTopRanking() {
+        ctx.fillStyle = "rgba(13, 17, 23, 0.96)";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.fillStyle = "#58a6ff";
+        ctx.font = "bold 20px 'Courier New'";
+        ctx.textAlign = "center";
+        ctx.fillText("🏆 TOP 10 (GALAXIAN)", canvas.width / 2, 50);
+
+        ctx.fillStyle = "#8b949e";
+        ctx.font = "12px 'Courier New'";
+        ctx.fillText("[TAB] Cambiar a Historial  |  [Cualquier tecla] Volver", canvas.width / 2, 78);
+
+        ctx.fillStyle = "#30363d";
+        ctx.fillRect(30, 105, canvas.width - 60, 30);
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 12px 'Courier New'";
+        ctx.textAlign = "left";
+        ctx.fillText("POS", 50, 125);
+        ctx.fillText("INICIALES", 130, 125);
+        ctx.textAlign = "right";
+        ctx.fillText("PUNTOS", canvas.width - 50, 125);
+
+        if (topRankingGlobal.length === 0) {
+            ctx.textAlign = "center";
+            ctx.fillStyle = "#8b949e";
+            ctx.font = "14px 'Courier New'";
+            ctx.fillText("Cargando registros...", canvas.width / 2, canvas.height / 2);
+        } else {
+            topRankingGlobal.forEach((item, index) => {
+                let yPos = 160 + (index * 30);
+                if (index % 2 === 0) {
+                    ctx.fillStyle = "rgba(255, 255, 255, 0.03)";
+                    ctx.fillRect(30, yPos - 18, canvas.width - 60, 26);
+                }
+
+                ctx.fillStyle = index === 0 ? "#ffd700" : (index === 1 ? "#c0c0c0" : (index === 2 ? "#cd7f32" : "#ffffff"));
+                ctx.font = "bold 13px 'Courier New'";
+                ctx.textAlign = "left";
+                ctx.fillText(`${index + 1}.`, 50, yPos);
+                ctx.fillText(item.iniciales || "AAA", 130, yPos);
+                
+                ctx.textAlign = "right";
+                ctx.fillStyle = "#58a6ff";
+                ctx.fillText(`${item.puntos} pts`, canvas.width - 50, yPos);
+            });
+        }
+        ctx.textAlign = "left";
+    }
+
+    function dibujarHistorialCompleto() {
+        ctx.fillStyle = "rgba(13, 17, 23, 0.96)";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.fillStyle = "#3fb950";
+        ctx.font = "bold 20px 'Courier New'";
+        ctx.textAlign = "center";
+        ctx.fillText("📜 HISTORIAL (GALAXIAN)", canvas.width / 2, 50);
+
+        ctx.fillStyle = "#8b949e";
+        ctx.font = "12px 'Courier New'";
+        ctx.fillText("[TAB] Cambiar a Top 10  |  [Cualquier tecla] Volver", canvas.width / 2, 78);
+
+        ctx.fillStyle = "#30363d";
+        ctx.fillRect(30, 105, canvas.width - 60, 30);
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 11px 'Courier New'";
+        ctx.textAlign = "left";
+        ctx.fillText("FECHA Y HORA", 45, 125);
+        ctx.fillText("INICIALES", 230, 125);
+        ctx.textAlign = "right";
+        ctx.fillText("PUNTOS", canvas.width - 45, 125);
+
+        if (historialGlobal.length === 0) {
+            ctx.textAlign = "center";
+            ctx.fillStyle = "#8b949e";
+            ctx.font = "14px 'Courier New'";
+            ctx.fillText("Cargando historial...", canvas.width / 2, canvas.height / 2);
+        } else {
+            historialGlobal.slice(0, 11).forEach((item, index) => {
+                let yPos = 160 + (index * 30);
+                if (index % 2 === 0) {
+                    ctx.fillStyle = "rgba(255, 255, 255, 0.03)";
+                    ctx.fillRect(30, yPos - 18, canvas.width - 60, 26);
+                }
+
+                let fechaStr = "Reciente";
+                if (item.fecha && item.fecha.toDate) {
+                    fechaStr = item.fecha.toDate().toLocaleString("es-ES", {
+                        day: '2-digit', month: '2-digit', year: 'numeric',
+                        hour: '2-digit', minute: '2-digit'
+                    });
+                }
+
+                ctx.fillStyle = "#ffffff";
+                ctx.font = "12px 'Courier New'";
+                ctx.textAlign = "left";
+                ctx.fillText(fechaStr, 45, yPos);
+                ctx.fillText(item.iniciales || "AAA", 240, yPos);
+                
+                ctx.textAlign = "right";
+                ctx.fillStyle = "#3fb950";
+                ctx.fillText(`${item.puntos} pts`, canvas.width - 45, yPos);
+            });
+        }
+        ctx.textAlign = "left";
+    }
+
+    function gameLoop() {
+        for (let i = particles.length - 1; i >= 0; i--) {
+            let pt = particles[i];
+            pt.x += pt.dx; pt.y += pt.dy; pt.vida--;
+            if (pt.vida <= 0) particles.splice(i, 1);
+        }
+
+        for (let est of stars) {
+            est.y += est.speed;
+            if (est.y > canvas.height) { est.y = 0; est.x = Math.random() * canvas.width; }
+        }
+
+        if (estadoPantalla === 1) {
+            drawStartScreen(); // Fondo estelar animado
+            dibujarTopRanking();
+        } else if (estadoPantalla === 2) {
+            drawStartScreen();
+            dibujarHistorialCompleto();
+        } else {
+            if (gameState === STATE_START) {
+                drawStartScreen();
+            } else if (gameState === STATE_PLAYING) {
+                updatePlayer();
+                updateBullet();
+                updateEnemyBullets();
+                updateParticlesAndTexts();
+                updateAliens();
+                if (gameState === STATE_PLAYING) {
+                    checkCollisions();
+                }
+                drawGame();
+            } else if (gameState === STATE_WAVE_CLEAR) {
+                updateParticlesAndTexts();
+                drawGame();
+                drawWaveClearScreen();
+            } else if (gameState === STATE_GAMEOVER) {
+                updateParticlesAndTexts();
+                drawGame();
+                drawGameOverScreen();
+
+                if ((keys["KeyR"] || keys["Space"]) && !scoreYaGuardadoEnPartida) {
+                    startGame();
+                }
+            }
+        }
+
+        if (gameState === STATE_GAMEOVER && !scoreYaGuardadoEnPartida && modalFirebase.style.display !== "block") {
+            scoreYaGuardadoEnPartida = true;
+            modalFirebase.style.display = "block";
+            inputIniciales.focus();
+        }
+
+        requestAnimationFrame(gameLoop);
+    }
+
+    gameLoop();
+</script>
+
+</body>
+</html>
