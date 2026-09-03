@@ -79,7 +79,7 @@
 <div class="game-container">
     <canvas id="gameCanvas" width="480" height="640"></canvas>
     <div class="instructions">
-        Mover: <b>Flechas Izq/Der</b> o <b>A/D</b> | Disparar: <b>Espacio</b> | Pantallas: <b>TAB</b>
+        Mover: <b>Flechas Izq/Der</b> o <b>A/D</b> | Disparar: <b>Espacio</b> | Menús: <b>TAB</b> | Menú Principal: <b>M</b>
     </div>
 
     <div id="firebase-modal">
@@ -414,6 +414,11 @@
             return;
         }
 
+        if (e.code === "KeyM") {
+            window.location.href = "index.html";
+            return;
+        }
+
         if (e.code === "Tab") {
             e.preventDefault();
             estadoPantalla = (estadoPantalla + 1) % 3;
@@ -440,7 +445,7 @@
         }
 
         if (gameState === STATE_GAMEOVER && (e.code === "KeyR" || e.code === "Space")) {
-            // Se maneja tras la inserción en Firebase o al reiniciar
+            startGame();
         }
     });
 
@@ -884,7 +889,7 @@
 
         ctx.fillStyle = "#58a6ff";
         ctx.font = "13px 'Courier New'";
-        ctx.fillText("Pulse [TAB] para ver el Top 10 e Historial", canvas.width / 2, canvas.height / 2 + 110);
+        ctx.fillText("Pulse [TAB] para ver Top 10 | [M] Menú", canvas.width / 2, canvas.height / 2 + 110);
 
         ctx.textAlign = "left";
     }
@@ -1034,7 +1039,7 @@
         
         ctx.fillStyle = "#58a6ff";
         ctx.font = "11px 'Courier New'";
-        ctx.fillText("TAB: Menús", 20, canvas.height - 10);
+        ctx.fillText("TAB: Menús | [M] Menú", 20, canvas.height - 10);
     }
 
     function drawGame() {
@@ -1167,7 +1172,7 @@
         }
 
         if (estadoPantalla === 1) {
-            drawStartScreen(); // Fondo estelar animado
+            drawStartScreen();
             dibujarTopRanking();
         } else if (estadoPantalla === 2) {
             drawStartScreen();
@@ -1193,10 +1198,6 @@
                 updateParticlesAndTexts();
                 drawGame();
                 drawGameOverScreen();
-
-                if ((keys["KeyR"] || keys["Space"]) && !scoreYaGuardadoEnPartida) {
-                    startGame();
-                }
             }
         }
 
