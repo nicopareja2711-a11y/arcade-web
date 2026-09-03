@@ -1,0 +1,1381 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Retro Space Invaders - Top 10 e Historial Completo</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #0a0a0f;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            color: #ffffff;
+            font-family: 'Courier New', Courier, monospace;
+            overflow: hidden;
+            user-select: none;
+        }
+        .main-container {
+            position: relative;
+            text-align: center;
+        }
+        canvas {
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.9);
+            border: 2px solid #202538;
+            background-color: #0a0a0f;
+        }
+        #firebase-modal {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(22, 27, 34, 0.95);
+            border: 2px solid #58a6ff;
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
+            z-index: 10;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.8);
+            font-family: Arial, sans-serif;
+            color: #fff;
+        }
+        #firebase-modal input {
+            background-color: #0d1117;
+            border: 1px solid #30363d;
+            color: #fff;
+            font-size: 18px;
+            text-align: center;
+            width: 80px;
+            padding: 5px;
+            border-radius: 4px;
+            text-transform: uppercase;
+            margin: 10px 0;
+        }
+        #firebase-modal button {
+            background-color: #238636;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        #firebase-modal button:hover {
+            background-color: #2ea043;
+        }
+    </style>
+</head>
+<body>
+
+<div class="main-container">
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+
+    <div id="firebase-modal">
+        <h3 style="margin:0 0 10px 0; color:#58a6ff;">¡NUEVA PUNTUACIÓN!</h3>
+        <p style="font-size:13px; margin:5px 0;">Introduce tus iniciales (máx 3):</p>
+        <input type="text" id="input-iniciales" maxlength="3" autocomplete="off" />
+        <br>
+        <button id="btn-guardar-score">Guardar Puntuación</button>
+    </div>
+</div>
+
+<script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+    import { getFirestore, collection, addDoc, getDocs, query, orderBy, limit, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+    const firebaseConfig = {
+        apiKey: "AIzaSyC-dctgL8ugJg6bAYzZUUcN_QvIUdlNEjI",
+        authDomain: "mi-arcade.firebaseapp.com",
+        projectId: "mi-arcade",
+        storageBucket: "mi-arcade.firebasestorage.app",
+        messagingSenderId: "483727672543",
+        appId: "1:483727672543:web:ff23857fc21d5adfb0d56a",
+        measurementId: "G-B5MSMGVMBM"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    const modalFirebase = document.getElementById("firebase-modal");
+    const inputIniciales = document.getElementById("input-iniciales");
+    const btnGuardarScore = document.getElementById("btn-guardar-score");
+
+    let scoreYaGuardadoEnPartida = false;
+    let topRankingGlobal = [];
+    let historialGlobal = [];
+
+    async function cargarTopRanking() {
+        try {
+            const q = query(collection(db, "puntuaciones_shooter"), orderBy("puntos", "desc"), limit(10));
+            const querySnapshot = await getDocs(q);
+            topRankingGlobal = [];
+            querySnapshot.forEach((doc) => { topRankingGlobal.push(doc.data()); });
+        } catch (e) {
+            console.error("Error al cargar el Top 10 del shooter: ", e);
+            topRankingGlobal = [{ iniciales: "ERR", puntos: 0 }];
+        }
+    }
+
+    async function cargarHistorialCompleto() {
+        try {
+            const q = query(collection(db, "puntuaciones_shooter"), orderBy("fecha", "desc"), limit(100));
+            const querySnapshot = await getDocs(q);
+            historialGlobal = [];
+            querySnapshot.forEach((doc) => { historialGlobal.push(doc.data()); });
+        } catch (e) {
+            console.error("Error al cargar el historial del shooter: ", e);
+            historialGlobal = [];
+        }
+    }
+
+    async function actualizarDatosFirestore() {
+        await Promise.all([cargarTopRanking(), cargarHistorialCompleto()]);
+    }
+    actualizarDatosFirestore();
+
+    btnGuardarScore.addEventListener("click", async () => {
+        let iniciales = inputIniciales.value.trim().toUpperCase();
+        if (!iniciales) iniciales = "AAA";
+        try {
+            await addDoc(collection(db, "puntuaciones_shooter"), {
+                iniciales: iniciales,
+                puntos: puntuacion,
+                fecha: serverTimestamp()
+            });
+            modalFirebase.style.display = "none";
+            inputIniciales.value = "";
+            await actualizarDatosFirestore();
+        } catch (e) {
+            console.error("Error al guardar: ", e);
+            alert("Hubo un error al guardar tu puntuación.");
+        }
+    });
+
+    // ==========================================
+    // 1. INICIALIZACIÓN Y CONFIGURACIÓN BÁSICA
+    // ==========================================
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+
+    const ANCHO = 800;
+    const ALTO = 600;
+
+    const teclas = {};
+    let estadoPantalla = 0; // 0: Juego, 1: Top 10, 2: Historial Completo
+
+    let audioCtx = null;
+    function inicializarAudio() {
+        if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+    }
+
+    window.addEventListener("keydown", (e) => {
+        inicializarAudio();
+
+        if (modalFirebase.style.display === "block") {
+            if (e.key === "Enter") {
+                btnGuardarScore.click();
+            }
+            return;
+        }
+
+        if (e.key === "Tab") {
+            e.preventDefault();
+            estadoPantalla = (estadoPantalla + 1) % 3;
+            return;
+        }
+
+        if (estadoPantalla !== 0) {
+            estadoPantalla = 0;
+        }
+
+        teclas[e.key] = true;
+        if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " "].includes(e.key)) {
+            e.preventDefault();
+        }
+    });
+
+    window.addEventListener("keyup", (e) => {
+        teclas[e.key] = false;
+    });
+
+    const estrellas = Array.from({ length: 150 }, () => ({
+        x: Math.random() * ANCHO,
+        y: Math.random() * ALTO,
+        velocidad: Math.random() * 2.0 + 0.5,
+        brillo: Math.floor(Math.random() * 155) + 100
+    }));
+
+    // ==========================================
+    // 2. GENERADOR DE SONIDOS RETRO (Web Audio API)
+    // ==========================================
+    function reproducirSonidoDisparo() {
+        if (!audioCtx) return;
+        try {
+            let osc = audioCtx.createOscillator();
+            let gain = audioCtx.createGain();
+            osc.type = 'square';
+            let currentTime = audioCtx.currentTime;
+            osc.frequency.setValueAtTime(700, currentTime);
+            osc.frequency.exponentialRampToValueAtTime(300, currentTime + 0.04);
+            gain.gain.setValueAtTime(0.08, currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, currentTime + 0.04);
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start(currentTime);
+            osc.stop(currentTime + 0.04);
+        } catch (e) {}
+    }
+
+    function reproducirSonidoOleada() {
+        if (!audioCtx) return;
+        try {
+            let osc = audioCtx.createOscillator();
+            let gain = audioCtx.createGain();
+            osc.type = 'sawtooth';
+            let currentTime = audioCtx.currentTime;
+            osc.frequency.setValueAtTime(300, currentTime);
+            osc.frequency.linearRampToValueAtTime(900, currentTime + 0.25);
+            gain.gain.setValueAtTime(0.1, currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, currentTime + 0.25);
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start(currentTime);
+            osc.stop(currentTime + 0.25);
+        } catch (e) {}
+    }
+
+    // ==========================================
+    // 3. SISTEMA DE EFECTOS VISUALES Y JUICE
+    // ==========================================
+    let particulas = [];
+    let shakeFrames = 0;
+    let intensidadShake = 0;
+    let gravedadAdvertenciaFrames = 0;
+    let gravedadMensajeTipo = "";
+    let direccionGravedad = 0; // -1 Izquierda, 0 Inactiva, 1 Derecha
+
+    function crearExplosion(x, y, color, cantidad = 8, radioMax = 2) {
+        for (let i = 0; i < cantidad; i++) {
+            let angulo = Math.random() * Math.PI * 2;
+            let velocidad = Math.random() * 3.5 + 1.0;
+            particulas.push({
+                x: x, y: y,
+                dx: Math.cos(angulo) * velocidad,
+                dy: Math.sin(angulo) * velocidad,
+                color: color,
+                radio: Math.floor(Math.random() * radioMax) + 1,
+                vida: Math.floor(Math.random() * 10) + 15
+            });
+        }
+    }
+
+    function activar_shake(duracion = 12, intensidad = 6) {
+        shakeFrames = duracion;
+        intensidadShake = intensidad;
+    }
+
+    function activar_advertencia_gravedad(tipo) {
+        gravedadAdvertenciaFrames = 120;
+        gravedadMensajeTipo = tipo;
+    }
+
+    // ==========================================
+    // 4. CLASE NAVE JUGADOR
+    // ==========================================
+    class NaveJugador {
+        constructor() {
+            this.ancho = 36;
+            this.alto = 24;
+            this.x = ANCHO / 2 - this.ancho / 2;
+            this.y = ALTO - 60;
+            this.velocidad = 5.5;
+            this.vidas = 3;
+            this.escudo = false;
+            this.tiempoTriple = 0;
+            this.tiempoVelocidad = 0;
+            this.tiempoTeledirigido = 0;
+            this.cadenciaMs = 280;
+            this.ultimoDisparo = 0;
+        }
+
+        mover(dir) {
+            let velActual = this.velocidad * (this.tiempoVelocidad > 0 ? 1.5 : 1.0);
+            this.x += dir * velActual;
+            this.x = Math.max(10, Math.min(ANCHO - this.ancho - 10, this.x));
+        }
+
+        obtenerCadencia() {
+            return this.tiempoVelocidad > 0 ? this.cadenciaMs / 2 : this.cadenciaMs;
+        }
+
+        actualizarPowerups() {
+            if (this.tiempoTriple > 0) this.tiempoTriple--;
+            if (this.tiempoVelocidad > 0) this.tiempoVelocidad--;
+            if (this.tiempoTeledirigido > 0) this.tiempoTeledirigido--;
+        }
+
+        dibujar() {
+            ctx.fillStyle = "#00ffc8";
+            ctx.beginPath();
+            ctx.moveTo(this.x + this.ancho / 2, this.y);
+            ctx.lineTo(this.x, this.y + this.alto);
+            ctx.lineTo(this.x + this.ancho / 2, this.y + this.alto - 6);
+            ctx.lineTo(this.x + this.ancho, this.y + this.alto);
+            ctx.closePath();
+            ctx.fill();
+
+            ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 1; ctx.stroke();
+
+            ctx.fillStyle = "#ff0096";
+            ctx.beginPath();
+            ctx.ellipse(this.x + this.ancho / 2, this.y + 10, 5, 5, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            if (this.escudo) {
+                ctx.strokeStyle = "#0096ff"; ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.ellipse(this.x + this.ancho / 2, this.y + this.alto / 2, this.ancho / 2 + 6, this.alto / 2 + 6, 0, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+        }
+
+        obtenerRect() { return { x: this.x, y: this.y, ancho: this.ancho, alto: this.alto }; }
+    }
+
+    // ==========================================
+    // 5. CLASE PROYECTIL (Con Gravedad Activa)
+    // ==========================================
+    class Proyectil {
+        constructor(x, y, dx = 0, dy = -9, color = "#32ff32", esEnemigo = false, tipo = "plasma", teledirigido = false) {
+            this.x = x; this.y = y; this.dx = dx; this.dy = dy;
+            this.color = color; this.esEnemigo = esEnemigo; this.tipo = tipo;
+            this.teledirigido = teledirigido; this.radio = 4; this.ancho = 6; this.alto = 18;
+            this.reflejado = false;
+
+            if (tipo === "misil") this.radio = 5;
+            else if (tipo === "laser" || tipo === "laser_rapido") { this.ancho = 4; this.alto = 18; }
+            else if (tipo === "fuego_boss") this.radio = 8;
+            else if (tipo === "laser_rebote") { this.ancho = 6; this.alto = 12; }
+            else if (tipo === "orbe_lento") this.radio = 6;
+            else if (tipo === "orbe_gigante") this.radio = 20;
+            else if (tipo === "rayo_dorado") { this.ancho = 6; this.alto = 30; }
+        }
+
+        actualizar(enemigosLista, jugadorPos, gravedadActiva, dirGravedad) {
+            if (this.reflejado && !this.esEnemigo) {
+                this.y -= 12; this.x += this.dx;
+                return;
+            }
+            if (this.tipo === "laser_rebote") {
+                this.x += this.dx; this.y += this.dy;
+                if (this.x <= 20 || this.x >= ANCHO - 20) this.dx *= -1;
+                return;
+            }
+            if (this.tipo === "orbe_gigante" && jugadorPos) {
+                let angJ = Math.atan2(jugadorPos.y - this.y, jugadorPos.x - this.x);
+                this.x += Math.cos(angJ) * 0.7; this.y += Math.sin(angJ) * 0.7;
+            }
+            if (this.teledirigido && !this.esEnemigo && enemigosLista.length > 0) {
+                let enemigoCercano = enemigosLista.reduce((cercano, e) => {
+                    let dC = Math.hypot(cercano.x - this.x, cercano.y - this.y);
+                    let dE = Math.hypot(e.x - this.x, e.y - this.y);
+                    return dE < dC ? e : cercano;
+                }, enemigosLista[0]);
+                let angObj = Math.atan2(enemigoCercano.y - this.y, enemigoCercano.x - this.x);
+                let angAct = Math.atan2(this.dy, this.dx);
+                let diff = angObj - angAct;
+                while (diff > Math.PI) diff -= 2 * Math.PI;
+                while (diff < -Math.PI) diff += 2 * Math.PI;
+                let nuevoAng = angAct + Math.max(-0.03, Math.min(0.03, diff));
+                this.dx = Math.cos(nuevoAng) * 8.5; this.dy = Math.sin(nuevoAng) * 8.5;
+            }
+            if (this.tipo === "misil") this.dy += 0.05;
+
+            if (gravedadActiva && dirGravedad !== 0) {
+                this.dx += 0.04 * dirGravedad;
+            }
+
+            this.x += this.dx;
+            this.y += this.dy;
+        }
+
+        dibujar() {
+            ctx.fillStyle = this.color;
+            if (["laser", "laser_rapido", "rayo_dorado"].includes(this.tipo)) {
+                ctx.fillRect(this.x, this.y, this.ancho, this.alto);
+            } else if (this.tipo === "laser_rebote") {
+                ctx.fillStyle = "#ff00ff";
+                ctx.fillRect(this.x, this.y, this.ancho, this.alto);
+            } else {
+                ctx.beginPath(); ctx.arc(this.x, this.y, this.radio, 0, Math.PI * 2); ctx.fill();
+            }
+        }
+
+        obtenerRect() {
+            if (["laser", "laser_rapido", "laser_rebote", "rayo_dorado"].includes(this.tipo)) {
+                return { x: this.x, y: this.y, ancho: this.ancho, alto: this.alto };
+            } else {
+                return { x: this.x - this.radio, y: this.y - this.radio, ancho: this.radio * 2, alto: this.radio * 2 };
+            }
+        }
+    }
+
+    // ==========================================
+    // 6. POWER-UPS Y ENEMIGOS
+    // ==========================================
+    class PowerUp {
+        constructor(tipo, yPos) {
+            this.tipo = tipo;
+            this.direccionX = Math.random() < 0.5 ? -1 : 1;
+            this.x = this.direccionX > 0 ? -30 : ANCHO + 30;
+            this.dx = this.direccionX > 0 ? 2.2 : -2.2;
+            this.y = yPos; this.ancho = 32; this.alto = 32; this.dy = 0.8; this.vidaUtil = 450;
+        }
+        actualizar() {
+            this.x += this.dx; this.y += this.dy;
+            if (this.y <= 50 || this.y >= ALTO - 100) this.dy *= -1;
+            this.vidaUtil--;
+        }
+        dibujar() {
+            if (this.vidaUtil < 100 && Math.floor(this.vidaUtil / 10) % 2 === 0) return;
+            const colores = { "triple": "#00ffff", "escudo": "#0096ff", "velocidad": "#ffa500", "teledirigido": "#ff0080" };
+            ctx.fillStyle = colores[this.tipo] || "#ffffff";
+            ctx.beginPath(); ctx.ellipse(this.x + 16, this.y + 16, 16, 16, 0, 0, Math.PI * 2); ctx.fill();
+            ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 2; ctx.stroke();
+            let letra = {"triple": "3", "teledirigido": "T", "velocidad": "V", "escudo": "E"}[this.tipo] || "?";
+            ctx.fillStyle = "#000000"; ctx.font = "bold 16px 'Courier New'"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+            ctx.fillText(letra, this.x + 16, this.y + 16); ctx.textBaseline = "alphabetic";
+        }
+        obtenerRect() { return { x: this.x, y: this.y, ancho: this.ancho, alto: this.alto }; }
+    }
+
+    class Enemigo {
+        constructor(x, y, tipo, filaIdx, colIdx, multVelBalas = 1.0) {
+            this.xInicio = x; this.yInicio = y; this.x = x; this.y = y;
+            this.tipo = tipo; this.filaIdx = filaIdx; this.colIdx = colIdx;
+            this.multVelBalas = multVelBalas; this.flashHitFrames = 0;
+            this.ancho = (tipo === 7) ? 38 : 32; this.alto = (tipo === 7) ? 26 : 22;
+
+            switch (tipo) {
+                case 1: this.puntos = 10; this.vida = 1; this.color = "#00ff64"; this.dispara = false; this.comportamiento = "estatico"; break;
+                case 2: this.puntos = 25; this.vida = 1; this.color = "#ffff00"; this.dispara = true; this.comportamiento = "estatico"; break;
+                case 3: this.puntos = 50; this.vida = 2; this.color = "#ff3232"; this.dispara = true; this.comportamiento = "estatico"; break;
+                case 4: this.puntos = 80; this.vida = 2; this.color = "#9632ff"; this.dispara = true; this.comportamiento = "ataque_frontal";
+                    this.estadoAtaque = "formacion"; this.timerAtaque = Math.floor(Math.random() * 200) + 250; this.progresoCurva = 0.0; this.yaDisparoEnPasada = false; break;
+                case 5: this.puntos = 120; this.vida = 3; this.color = "#ff00ff"; this.dispara = true; this.comportamiento = "zigzag"; this.offsetZigzag = Math.random() * Math.PI; break;
+                case 6: this.puntos = 180; this.vida = 4; this.color = "#32ffff"; this.dispara = true; this.comportamiento = "estatico"; break;
+                case 7: default: this.puntos = 250; this.vida = 5; this.color = "#ff7832"; this.dispara = true; this.comportamiento = "descenso_vertical";
+                    this.estadoDescenso = "formacion"; this.timerDescenso = Math.floor(Math.random() * 250) + 350; this.progresoY = 0.0; break;
+            }
+            this.offsetAtacaX = 0; this.offsetAtacaY = 0;
+        }
+
+        disparar(listaProyectiles) {
+            let hx = this.x + this.ancho / 2, hy = this.y + this.alto, vb = this.multVelBalas;
+            if (this.tipo === 3) {
+                listaProyectiles.push(new Proyectil(hx - 8, hy, 0, 4.0 * vb, this.color, true, "plasma"));
+                listaProyectiles.push(new Proyectil(hx + 8, hy, 0, 4.0 * vb, this.color, true, "plasma"));
+            } else if (this.tipo === 4) {
+                listaProyectiles.push(new Proyectil(hx, hy, 0, 4.5 * vb, this.color, true, "plasma"));
+            } else if (this.tipo === 5) {
+                listaProyectiles.push(new Proyectil(hx, hy, 0.4, 3.8 * vb, this.color, true, "plasma"));
+            } else if (this.tipo === 6) {
+                listaProyectiles.push(new Proyectil(hx, hy, -1.2, 4.0 * vb, this.color, true, "plasma"));
+                listaProyectiles.push(new Proyectil(hx, hy, 1.2, 4.0 * vb, this.color, true, "plasma"));
+            } else if (this.tipo === 7) {
+                listaProyectiles.push(new Proyectil(hx, hy, 0, 3.0 * vb, this.color, true, "misil"));
+            } else {
+                listaProyectiles.push(new Proyectil(hx, hy, 0, 4.0 * vb, this.color, true, "plasma"));
+            }
+        }
+
+        actualizar(formacionX, formacionY, listaProyectilesEnemigos, caminoLibre) {
+            if (this.flashHitFrames > 0) this.flashHitFrames--;
+            let baseX = this.xInicio + formacionX, baseY = this.yInicio + formacionY;
+
+            if (this.comportamiento === "ataque_frontal") {
+                if (this.estadoAtaque === "formacion") {
+                    if (caminoLibre) this.timerAtaque--;
+                    this.x = baseX; this.y = baseY; this.yaDisparoEnPasada = false;
+                    if (this.timerAtaque <= 0) { this.estadoAtaque = "atacando"; this.progresoCurva = 0.0; this.origenAtaqueX = baseX; this.origenAtaqueY = baseY; }
+                } else if (this.estadoAtaque === "atacando") {
+                    this.progresoCurva += 0.018;
+                    this.x = this.origenAtaqueX + Math.sin(this.progresoCurva * 2) * 120;
+                    this.y = this.origenAtaqueY + Math.sin(this.progresoCurva) * 150;
+                    if (!this.yaDisparoEnPasada && Math.PI/2 <= this.progresoCurva && this.progresoCurva <= Math.PI/2 + 0.05) {
+                        this.yaDisparoEnPasada = true;
+                        listaProyectilesEnemigos.push(new Proyectil(this.x + this.ancho/2, this.y + this.alto, 0, 5.2 * this.multVelBalas, this.color, true, "plasma"));
+                    }
+                    if (this.progresoCurva >= Math.PI) { this.estadoAtaque = "formacion"; this.timerAtaque = Math.floor(Math.random() * 200) + 300; }
+                }
+                this.offsetAtacaX = this.x - baseX; this.offsetAtacaY = this.y - baseY;
+            } else if (this.comportamiento === "zigzag") {
+                this.offsetZigzag += 0.04;
+                this.x = baseX + Math.sin(this.offsetZigzag) * 45; this.y = baseY;
+                this.offsetAtacaX = this.x - baseX; this.offsetAtacaY = this.y - baseY;
+            } else if (this.comportamiento === "descenso_vertical") {
+                if (this.estadoDescenso === "formacion") {
+                    if (caminoLibre) this.timerDescenso--;
+                    this.x = baseX; this.y = baseY;
+                    if (this.timerDescenso <= 0) { this.estadoDescenso = "bajando"; this.progresoY = 0.0; this.origenX = baseX; }
+                } else if (this.estadoDescenso === "bajando") {
+                    this.progresoY += 1.8; this.x = this.origenX; this.y = baseY + this.progresoY;
+                    if (this.y >= ALTO - 130) this.estadoDescenso = "volviendo_arriba";
+                } else if (this.estadoDescenso === "volviendo_arriba") {
+                    this.progresoY -= 3.0; this.y = baseY + this.progresoY;
+                    if (this.y <= baseY) { this.estadoDescenso = "formacion"; this.timerDescenso = Math.floor(Math.random() * 300) + 500; }
+                }
+                this.offsetAtacaX = this.x - baseX; this.offsetAtacaY = this.y - baseY;
+            } else {
+                this.x = baseX; this.y = baseY; this.offsetAtacaX = 0; this.offsetAtacaY = 0;
+            }
+        }
+
+        dibujar() {
+            let rx = this.x + this.offsetAtacaX, ry = this.y + this.offsetAtacaY;
+            let colActual = (this.flashHitFrames > 0 && this.vida > 0) ? "#141414" : this.color;
+            ctx.fillStyle = colActual;
+            ctx.fillRect(rx + 6, ry + 4, this.ancho - 12, this.alto - 8);
+            ctx.fillRect(rx + 2, ry + 10, this.ancho - 4, 6);
+            ctx.fillRect(rx + 8, ry, 4, 4); ctx.fillRect(rx + this.ancho - 12, ry, 4, 4);
+            ctx.fillStyle = "#0a0a0f";
+            ctx.fillRect(rx + 8, ry + 8, 4, 4); ctx.fillRect(rx + this.ancho - 12, ry + 8, 4, 4);
+        }
+
+        obtenerRect() { return { x: this.x + this.offsetAtacaX, y: this.y + this.offsetAtacaY, ancho: this.ancho, alto: this.alto }; }
+    }
+
+    // ==========================================
+    // 7. JEFES ÉPICOS
+    // ==========================================
+    class JefeSector1 {
+        constructor() {
+            this.ancho = 130; this.alto = 70;
+            this.x = ANCHO / 2 - this.ancho / 2;
+            this.y_destino = 80; this.y = -100;
+            this.vida_max = 30; this.vida = this.vida_max;
+            this.direccion = 1; this.velocidad = 1.8;
+            this.ultimoAtaque = 0; this.fase2 = false; this.timerBoca = 0;
+            this.color = "#dc1e50"; this.flashHitFrames = 0;
+        }
+        actualizar(listaProyectiles, tActual) {
+            if (this.flashHitFrames > 0) this.flashHitFrames--;
+            if (this.y < this.y_destino) { this.y += 2.0; return; }
+            this.x += this.velocidad * this.direccion;
+            if (this.x <= 20 || this.x >= ANCHO - this.ancho - 20) this.direccion *= -1;
+            if (!this.fase2 && this.vida <= this.vida_max / 2) {
+                this.fase2 = true; this.velocidad = 2.5; this.color = "#ff0000";
+                activar_shake(20, 6);
+            }
+            this.timerBoca++;
+            if (tActual - this.ultimoAtaque >= 1100) {
+                this.ultimoAtaque = tActual;
+                let numBalas = this.fase2 ? 7 : 5;
+                let tipoBala = this.fase2 ? "fuego_boss" : "plasma";
+                for (let a = -Math.floor(numBalas/2); a <= Math.floor(numBalas/2); a++) {
+                    listaProyectiles.push(new Proyectil(this.x + this.ancho/2, this.y + this.alto, a * 1.5, 4.5, "#ff3232", true, tipoBala));
+                }
+            }
+        }
+        dibujar() {
+            let rx = Math.floor(this.x), ry = Math.floor(this.y);
+            let colActual = this.flashHitFrames > 0 ? "#141414" : this.color;
+            ctx.fillStyle = colActual;
+            ctx.fillRect(rx + 15, ry + 15, this.ancho - 30, this.alto - 30);
+            ctx.fillStyle = "#ffd700"; ctx.fillRect(rx, ry + 25, this.ancho, 20);
+
+            let anchoBar = 300, xBar = ANCHO / 2 - anchoBar / 2;
+            ctx.fillStyle = "#ffffff"; ctx.font = "bold 13px 'Courier New'"; ctx.textAlign = "center";
+            ctx.fillText(`JEFE: DEVORADOR ABISAL ${this.fase2 ? '[FASE 2]' : ''}`, ANCHO / 2, 55);
+            ctx.fillStyle = "#323232"; ctx.fillRect(xBar, 62, anchoBar, 10);
+            ctx.fillStyle = this.color; ctx.fillRect(xBar, 62, Math.max(0, anchoBar * (this.vida / this.vida_max)), 10);
+            ctx.strokeStyle = "#ffffff"; ctx.strokeRect(xBar, 62, anchoBar, 10);
+        }
+        obtenerRect() { return { x: this.x, y: this.y, ancho: this.ancho, alto: this.alto }; }
+    }
+
+    class MiniJefeRombico {
+        constructor(x, y) {
+            this.ancho = 50; this.alto = 50;
+            this.x = x; this.y = y;
+            this.vida_max = 10; this.vida = this.vida_max;
+            this.dx = Math.random() < 0.5 ? -1.5 : 1.5; this.dy = 1.0;
+            this.color = "#b400ff"; this.ultimoAtaque = 0; this.flashHitFrames = 0;
+        }
+        actualizar(listaProyectiles, tActual) {
+            if (this.flashHitFrames > 0) this.flashHitFrames--;
+            this.x += this.dx; this.y += this.dy;
+            if (this.x <= 30 || this.x >= ANCHO - this.ancho - 30) this.dx *= -1;
+            if (this.y >= 220 || this.y <= 60) this.dy *= -1;
+
+            if (tActual - this.ultimoAtaque >= 1800) {
+                this.ultimoAtaque = tActual;
+                listaProyectiles.push(new Proyectil(this.x + this.ancho/2, this.y + this.alto, 0, 3.0, this.color, true, "plasma"));
+            }
+        }
+        dibujar() {
+            let rx = Math.floor(this.x), ry = Math.floor(this.y);
+            ctx.fillStyle = this.flashHitFrames > 0 ? "#141414" : this.color;
+            ctx.beginPath();
+            ctx.moveTo(rx + this.ancho / 2, ry); ctx.lineTo(rx + this.ancho, ry + this.alto / 2);
+            ctx.lineTo(rx + this.ancho / 2, ry + this.alto); ctx.lineTo(rx, ry + this.alto / 2);
+            ctx.closePath(); ctx.fill(); ctx.strokeStyle = "#ffffff"; ctx.stroke();
+
+            ctx.fillStyle = "#323232"; ctx.fillRect(rx, ry - 10, this.ancho, 5);
+            ctx.fillStyle = "#00ffc8"; ctx.fillRect(rx, ry - 10, Math.max(0, this.ancho * (this.vida / this.vida_max)), 5);
+        }
+        obtenerRect() { return { x: this.x, y: this.y, ancho: this.ancho, alto: this.alto }; }
+    }
+
+    class JefePrismaRebotador {
+        constructor() {
+            this.ancho = 120; this.alto = 65;
+            this.x = ANCHO / 2 - this.ancho / 2;
+            this.y_destino = 85; this.y = -100;
+            this.vida_max = 13; this.vida = this.vida_max;
+            this.direccion = 1; this.velocidad = 2.0;
+            this.ultimoAtaque = 0; this.dividido = false; this.romboJefes = [];
+            this.color = "#ff00ff"; this.flashHitFrames = 0;
+        }
+        actualizar(listaProyectiles, tActual) {
+            if (this.flashHitFrames > 0) this.flashHitFrames--;
+            if (this.y < this.y_destino) { this.y += 2.0; return; }
+            if (!this.dividido) {
+                this.x += this.velocidad * this.direccion;
+                if (this.x <= 30 || this.x >= ANCHO - this.ancho - 30) this.direccion *= -1;
+                if (tActual - this.ultimoAtaque >= 600) {
+                    this.ultimoAtaque = tActual;
+                    listaProyectiles.push(new Proyectil(this.x + this.ancho/2, this.y + this.alto, Math.random() < 0.5 ? -1.5 : 1.5, 3.5, this.color, true, "laser_rebote"));
+                }
+            } else {
+                for (let r of this.romboJefes) r.actualizar(listaProyectiles, tActual);
+            }
+        }
+        dividirJefe() {
+            this.dividido = true;
+            this.romboJefes.push(new MiniJefeRombico(this.x - 60, this.y));
+            this.romboJefes.push(new MiniJefeRombico(this.x + 60, this.y));
+            activar_shake(20, 8);
+        }
+        dibujar() {
+            if (!this.dividido) {
+                let rx = Math.floor(this.x), ry = Math.floor(this.y);
+                ctx.fillStyle = this.flashHitFrames > 0 ? "#141414" : this.color;
+                ctx.beginPath();
+                ctx.moveTo(rx + this.ancho / 2, ry); ctx.lineTo(rx + this.ancho, ry + this.alto); ctx.lineTo(rx, ry + this.alto);
+                ctx.closePath(); ctx.fill();
+                ctx.fillStyle = "#ffffff"; ctx.beginPath(); ctx.arc(rx + this.ancho/2, ry + this.alto/2 + 5, 8, 0, Math.PI*2); ctx.fill();
+
+                let anchoBar = 280, xBar = ANCHO / 2 - anchoBar / 2;
+                ctx.fillStyle = "#ffffff"; ctx.font = "bold 13px 'Courier New'"; ctx.textAlign = "center";
+                ctx.fillText("JEFE: PRISMA REBOTADOR", ANCHO / 2, 55);
+                ctx.fillStyle = "#323232"; ctx.fillRect(xBar, 62, anchoBar, 10);
+                ctx.fillStyle = this.color; ctx.fillRect(xBar, 62, Math.max(0, anchoBar * (this.vida / this.vida_max)), 10);
+                ctx.strokeStyle = "#ffffff"; ctx.strokeRect(xBar, 62, anchoBar, 10);
+            } else {
+                for (let r of this.romboJefes) r.dibujar();
+            }
+        }
+        obtenerRect() {
+            if (this.dividido) return { x: -1000, y: -1000, ancho: 0, alto: 0 };
+            return { x: this.x, y: this.y, ancho: this.ancho, alto: this.alto };
+        }
+    }
+
+    class JefeSector3 {
+        constructor() {
+            this.ancho = 100; this.alto = 60;
+            this.x = ANCHO / 2 - this.ancho / 2;
+            this.y_destino = 80; this.y = -100;
+            this.vida_max = 35; this.vida = this.vida_max;
+            this.direccion = 1; this.velocidad = 2.0;
+            this.ultimoAtaque = 0; this.espejoActivo = true; this.timerEspejo = 0;
+            this.color = "#00c8ff"; this.flashHitFrames = 0;
+        }
+        actualizar(listaProyectiles, tActual) {
+            if (this.flashHitFrames > 0) this.flashHitFrames--;
+            if (this.y < this.y_destino) { this.y += 2.0; return; }
+            this.x += this.velocidad * this.direccion;
+            if (this.x <= 20 || this.x >= ANCHO - this.ancho - 20) this.direccion *= -1;
+            this.timerEspejo++;
+            if (this.timerEspejo >= 300) { this.timerEspejo = 0; this.espejoActivo = Math.random() < 0.7; }
+            if (tActual - this.ultimoAtaque >= 1100) {
+                this.ultimoAtaque = tActual;
+                for (let a of [-2, 0, 2]) {
+                    listaProyectiles.push(new Proyectil(this.x + this.ancho/2, this.y + this.alto, a, 5.0, "#00ffc8", true, "laser"));
+                }
+            }
+        }
+        dibujar() {
+            let rx = Math.floor(this.x), ry = Math.floor(this.y);
+            ctx.fillStyle = this.flashHitFrames > 0 ? "#141414" : this.color;
+            ctx.fillRect(rx + 20, ry + 10, this.ancho - 40, this.alto - 20);
+            ctx.fillStyle = "#ffffff"; ctx.beginPath(); ctx.arc(rx + this.ancho/2, ry + this.alto/2, 10, 0, Math.PI*2); ctx.fill();
+            if (this.espejoActivo) {
+                ctx.fillStyle = "#0096ff"; ctx.fillRect(rx - 10, ry + 60, this.ancho + 20, 8);
+                ctx.strokeStyle = "#ffffff"; ctx.strokeRect(rx - 10, ry + 60, this.ancho + 20, 8);
+            }
+            let anchoBar = 280, xBar = ANCHO / 2 - anchoBar / 2;
+            ctx.fillStyle = "#ffffff"; ctx.font = "bold 13px 'Courier New'"; ctx.textAlign = "center";
+            ctx.fillText(`JEFE: CENTINELA ESPEJO ${this.espejoActivo ? '[ESCUDO]' : ''}`, ANCHO / 2, 55);
+            ctx.fillStyle = "#323232"; ctx.fillRect(xBar, 62, anchoBar, 10);
+            ctx.fillStyle = this.color; ctx.fillRect(xBar, 62, Math.max(0, anchoBar * (this.vida / this.vida_max)), 10);
+            ctx.strokeStyle = "#ffffff"; ctx.strokeRect(xBar, 62, anchoBar, 10);
+        }
+        obtenerRect() { return { x: this.x, y: this.y, ancho: this.ancho, alto: this.alto }; }
+    }
+
+    class JefeSector4 {
+        constructor() {
+            this.ancho = 130; this.alto = 70;
+            this.x = ANCHO / 2 - this.ancho / 2;
+            this.y_destino = 85; this.y = -100;
+            this.vida_max = 45; this.vida = this.vida_max;
+            this.direccion = 1; this.velocidad = 1.8;
+            this.ultimoAtaque = 0; this.anguloHex = 0.0; this.indiceFuente = 0;
+            this.color = "#00ff78"; this.flashHitFrames = 0;
+        }
+        actualizar(listaProyectiles, tActual) {
+            if (this.flashHitFrames > 0) this.flashHitFrames--;
+            if (this.y < this.y_destino) { this.y += 2.0; return; }
+            this.x += this.velocidad * this.direccion;
+            if (this.x <= 25 || this.x >= ANCHO - this.ancho - 25) this.direccion *= -1;
+            this.anguloHex += 0.04;
+            if (tActual - this.ultimoAtaque >= 450) {
+                this.ultimoAtaque = tActual;
+                for (let i = 0; i < 6; i++) {
+                    let ang = this.anguloHex + (i * (Math.PI / 3));
+                    let fx = this.x + this.ancho/2 + Math.cos(ang) * 50;
+                    let fy = this.y + this.alto/2 + Math.sin(ang) * 35;
+                    listaProyectiles.push(new Proyectil(fx, fy, Math.cos(ang) * 4.5, Math.sin(ang) * 4.5, this.color, true, "plasma"));
+                }
+            }
+        }
+        dibujar() {
+            let rx = Math.floor(this.x), ry = Math.floor(this.y);
+            ctx.fillStyle = this.flashHitFrames > 0 ? "#141414" : this.color;
+            ctx.fillRect(rx + 20, ry + 15, this.ancho - 40, this.alto - 30);
+            ctx.fillStyle = "#ffffff"; ctx.beginPath(); ctx.arc(rx + this.ancho/2, ry + this.alto/2, 10, 0, Math.PI*2); ctx.fill();
+            
+            for (let i = 0; i < 6; i++) {
+                let ang = this.anguloHex + (i * (Math.PI / 3));
+                let hx = rx + this.ancho/2 + Math.cos(ang) * 50;
+                let hy = ry + this.alto/2 + Math.sin(ang) * 35;
+                ctx.fillStyle = "#00ffc8"; ctx.beginPath(); ctx.arc(hx, hy, 5, 0, Math.PI*2); ctx.fill();
+            }
+
+            let anchoBar = 280, xBar = ANCHO / 2 - anchoBar / 2;
+            ctx.fillStyle = "#ffffff"; ctx.font = "bold 13px 'Courier New'"; ctx.textAlign = "center";
+            ctx.fillText("JEFE: NÚCLEO HEXAGONAL", ANCHO / 2, 55);
+            ctx.fillStyle = "#323232"; ctx.fillRect(xBar, 62, anchoBar, 10);
+            ctx.fillStyle = this.color; ctx.fillRect(xBar, 62, Math.max(0, anchoBar * (this.vida / this.vida_max)), 10);
+            ctx.strokeStyle = "#ffffff"; ctx.strokeRect(xBar, 62, anchoBar, 10);
+        }
+        obtenerRect() { return { x: this.x, y: this.y, ancho: this.ancho, alto: this.alto }; }
+    }
+
+    class MegaJefeAngelVacio {
+        constructor() {
+            this.ancho = 160; this.alto = 80;
+            this.x = ANCHO / 2 - this.ancho / 2;
+            this.y_destino = 75; this.y = -120;
+            this.vida_max = 60; this.vida = this.vida_max;
+            this.fase = 1; this.velocidad = 1.5; this.direccion = 1;
+            this.ultimoAtaque = 0; this.color = "#7800c8"; this.flashHitFrames = 0;
+        }
+        actualizar(listaProyectiles, tActual) {
+            if (this.flashHitFrames > 0) this.flashHitFrames--;
+            if (this.y < this.y_destino) { this.y += 1.5; return; }
+            if (this.vida <= this.vida_max * 0.50 && this.fase < 2) {
+                this.fase = 2; this.velocidad = 2.0; this.color = "#ffd700";
+                activar_shake(40, 9);
+            }
+            this.x += this.velocidad * this.direccion;
+            if (this.x <= 20 || this.x >= ANCHO - this.ancho - 20) this.direccion *= -1;
+            if (tActual - this.ultimoAtaque >= 1200) {
+                this.ultimoAtaque = tActual;
+                if (this.fase === 1) {
+                    listaProyectiles.push(new Proyectil(this.x + this.ancho/2, this.y + this.alto, 0, 1.5, "#9600ff", true, "orbe_lento"));
+                } else {
+                    listaProyectiles.push(new Proyectil(this.x + this.ancho/2, this.y + this.alto, 0, 3.2, "#ffd700", true, "rayo_dorado"));
+                }
+            }
+        }
+        dibujar() {
+            let rx = Math.floor(this.x), ry = Math.floor(this.y);
+            ctx.fillStyle = this.flashHitFrames > 0 ? "#141414" : this.color;
+            ctx.fillRect(rx, ry, this.ancho, this.alto);
+            ctx.fillStyle = "#ffffff"; ctx.fillRect(rx + 25, ry + 20, this.ancho - 50, this.alto - 40);
+            ctx.fillStyle = "#000000"; ctx.beginPath(); ctx.arc(rx + this.ancho/2, ry + this.alto/2, 10, 0, Math.PI*2); ctx.fill();
+
+            let anchoBar = 320, xBar = ANCHO / 2 - anchoBar / 2;
+            ctx.fillStyle = this.fase === 2 ? "#ffd700" : "#c864ff"; ctx.font = "bold 13px 'Courier New'"; ctx.textAlign = "center";
+            ctx.fillText(`JEFE SUPREMO [FASE ${this.fase}: ÁNGEL]`, ANCHO / 2, 55);
+            ctx.fillStyle = "#323232"; ctx.fillRect(xBar, 62, anchoBar, 10);
+            ctx.fillStyle = this.color; ctx.fillRect(xBar, 62, Math.max(0, anchoBar * (this.vida / this.vida_max)), 10);
+            ctx.strokeStyle = "#ffffff"; ctx.strokeRect(xBar, 62, anchoBar, 10);
+        }
+        obtenerRect() { return { x: this.x, y: this.y, ancho: this.ancho, alto: this.alto }; }
+    }
+
+    // ==========================================
+    // 8. GESTIÓN DE JUEGO Y ESTADOS
+    // ==========================================
+    const jugador = new NaveJugador();
+    let proyectilesJugador = [];
+    let proyectilesEnemigos = [];
+    let enemigos = [];
+    let powerups = [];
+    let jefeActual = null;
+    let puntuacion = 0;
+    let oleada = 1;
+
+    let formacionX = 0;
+    let formacionY = 0;
+    let formacionDir = 1;
+    let ultimoDisparoEnemigosMs = 0;
+    let tiempoUltimoPowerup = 0;
+
+    function colisiona(r1, r2) {
+        return r1.x < r2.x + r2.ancho &&
+               r1.x + r1.ancho > r2.x &&
+               r1.y < r2.y + r2.alto &&
+               r1.y + r1.alto > r2.y;
+    }
+
+    function seleccionarJefePorOleada(ol) {
+        if (ol === 3) return new JefeSector1();
+        if (ol === 6) return new JefePrismaRebotador();
+        if (ol === 9) return new JefeSector3();
+        if (ol === 12) return new JefeSector4();
+        if (ol >= 15) return new MegaJefeAngelVacio();
+        return new JefeSector1();
+    }
+
+    function generarOleadaEnemigos() {
+        enemigos = [];
+        jefeActual = null;
+        formacionX = 0;
+        formacionY = 0;
+
+        reproducirSonidoOleada();
+
+        if ([3, 6, 9, 12, 15].includes(oleada)) {
+            jefeActual = seleccionarJefePorOleada(oleada);
+            return;
+        }
+
+        let patron = oleada % 4;
+        let filas = 4;
+        let cols = 10;
+
+        for (let f = 0; f < filas; f++) {
+            for (let c = 0; c < cols; c++) {
+                let x = 80 + (c * 65);
+                let y = 70 + (f * 40);
+
+                if (patron === 1 && Math.abs(c - 4.5) < f) continue;
+                else if (patron === 2 && Math.abs(c - 4.5) + Math.abs(f - 1.5) > 3) continue;
+                else if (patron === 3 && c % 3 === 0) continue;
+
+                let tipo = 1;
+                if (oleada < 3) {
+                    if (f === 2 || f === 3) tipo = 1;
+                    else if (f === 1) tipo = 2;
+                    else tipo = (Math.random() < 0.2) ? 3 : 2;
+                } else {
+                    let maxTipo = Math.min(7, 3 + Math.floor((oleada - 3) / 2));
+                    if (f === 0) tipo = Math.floor(Math.random() * (Math.min(6, maxTipo) - 3 + 1)) + 3;
+                    else if (f === 1) tipo = Math.floor(Math.random() * (Math.min(5, maxTipo) - 2 + 1)) + 2;
+                    else tipo = Math.floor(Math.random() * maxTipo) + 1;
+                }
+
+                let multiplicadorVel = 1.0 + ((oleada - 1) * 0.08);
+                enemigos.push(new Enemigo(x, y, tipo, f, c, multiplicadorVel));
+            }
+        }
+
+        if (enemigos.length === 0) {
+            let multiplicadorVel = 1.0 + ((oleada - 1) * 0.08);
+            for (let c = 0; c < 8; c++) {
+                enemigos.push(new Enemigo(120 + (c * 65), 100, 1, 0, c, multiplicadorVel));
+            }
+        }
+    }
+
+    function generarPowerupAleatorio(tiempoActual) {
+        const tipos = ["triple", "escudo", "velocidad", "teledirigido"];
+        let tipoElegido = tipos[Math.floor(Math.random() * tipos.length)];
+        let yPos = Math.floor(Math.random() * 160) + 120;
+        powerups.push(new PowerUp(tipoElegido, yPos));
+        tiempoUltimoPowerup = tiempoActual;
+    }
+
+    generarOleadaEnemigos();
+
+    // ==========================================
+    // 9. BUCLE PRINCIPAL DEL JUEGO
+    // ==========================================
+    function bucleJuego(tiempoActual) {
+        for (let i = particulas.length - 1; i >= 0; i--) {
+            let pt = particulas[i];
+            pt.x += pt.dx; pt.y += pt.dy; pt.vida--;
+            if (pt.vida <= 0) particulas.splice(i, 1);
+        }
+
+        for (let est of estrellas) {
+            est.y += est.velocidad;
+            if (est.y > ALTO) { est.y = 0; est.x = Math.random() * ANCHO; }
+        }
+
+        if (estadoPantalla === 0) {
+            if (teclas["ArrowLeft"] || teclas["a"] || teclas["A"]) jugador.mover(-1);
+            if (teclas["ArrowRight"] || teclas["d"] || teclas["D"]) jugador.mover(1);
+
+            jugador.actualizarPowerups();
+
+            if (powerups.length === 0 && tiempoActual - tiempoUltimoPowerup >= 18000 && Math.random() < 0.01) {
+                generarPowerupAleatorio(tiempoActual);
+            }
+
+            for (let pw of powerups) pw.actualizar();
+            powerups = powerups.filter(pw => pw.vidaUtil > 0 && pw.x >= -60 && pw.x <= ANCHO + 60);
+
+            // Control de anomalías gravitacionales aleatorias a partir de la oleada 4
+            if (oleada >= 4 && ![3, 6, 9, 12, 15].includes(oleada) && jefeActual === null && Math.random() < 0.0008) {
+                let nuevaGrav = randomChoice([-1, 0, 1]);
+                if (nuevaGrav !== direccionGravedad) {
+                    if (nuevaGrav > 0) activar_advertencia_gravedad("DERECHA");
+                    else if (nuevaGrav < 0) activar_advertencia_gravedad("IZQUIERDA");
+                    else activar_advertencia_gravedad("INACTIVA");
+                    direccionGravedad = nuevaGrav;
+                }
+            }
+            function randomChoice(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+            let cadenciaEfectiva = jugador.obtenerCadencia();
+            if ((teclas[" "] || teclas["Space"]) && tiempoActual - jugador.ultimoDisparo >= cadenciaEfectiva) {
+                jugador.ultimoDisparo = tiempoActual;
+                reproducirSonidoDisparo();
+
+                if (jugador.tiempoTriple > 0) {
+                    proyectilesJugador.push(new Proyectil(jugador.x + jugador.ancho / 2, jugador.y, -3, -9, "#32ff32"));
+                    proyectilesJugador.push(new Proyectil(jugador.x + jugador.ancho / 2, jugador.y, 0, -9, "#32ff32"));
+                    proyectilesJugador.push(new Proyectil(jugador.x + jugador.ancho / 2, jugador.y, 3, -9, "#32ff32"));
+                } else {
+                    let esTeledirigido = jugador.tiempoTeledirigido > 0;
+                    let colorBala = esTeledirigido ? "#ff0080" : "#32ff32";
+                    proyectilesJugador.push(new Proyectil(jugador.x + jugador.ancho / 2, jugador.y, 0, -9, colorBala, false, "plasma", esTeledirigido));
+                }
+            }
+
+            let gravedadActiva = (oleada >= 4 && ![3,6,9,12,15].includes(oleada) && jefeActual === null);
+            for (let p of proyectilesJugador) p.actualizar(enemigos, { x: jugador.x, y: jugador.y }, gravedadActiva, direccionGravedad);
+            proyectilesJugador = proyectilesJugador.filter(p => p.y >= 0 && p.y <= ALTO && p.x >= 0 && p.x <= ANCHO);
+
+            for (let p of proyectilesEnemigos) p.actualizar(enemigos, { x: jugador.x, y: jugador.y }, gravedadActiva, direccionGravedad);
+            proyectilesEnemigos = proyectilesEnemigos.filter(p => p.y >= 0 && p.y <= ALTO && p.x >= 0 && p.x <= ANCHO);
+
+            if (jefeActual !== null) {
+                jefeActual.actualizar(proyectilesEnemigos, tiempoActual);
+            } else if (enemigos.length > 0) {
+                let progresoTramo = (oleada - 1) % 4;
+                let velBloque = (0.75 + (progresoTramo * 0.15)) * (1.0 + (oleada * 0.035));
+                formacionX += velBloque * formacionDir;
+                if (formacionX >= 70 || formacionX <= -70) formacionDir *= -1;
+
+                let colsEn = {};
+                for (let e of enemigos) {
+                    if (!(e.colIdx in colsEn) || e.filaIdx > colsEn[e.colIdx].filaIdx) {
+                        colsEn[e.colIdx] = e;
+                    }
+                }
+                let numLibres = Object.keys(colsEn).length;
+                let fact = 1.0 + Math.max(0.0, (10 - numLibres) * 0.05);
+
+                for (let e of enemigos) {
+                    let caminoLibre = (colsEn[e.colIdx] === e);
+                    e.actualizar(formacionX, formacionY, proyectilesEnemigos, caminoLibre);
+
+                    if (e.dispara && caminoLibre && Math.random() < (1 / (190 / fact)) && (tiempoActual - ultimoDisparoEnemigosMs >= 500)) {
+                        ultimoDisparoEnemigosMs = tiempoActual;
+                        e.disparar(proyectilesEnemigos);
+                    }
+
+                    if (e.y + e.alto >= jugador.y) {
+                        jugador.vidas = 0; // Trigger game over cleanly
+                        break;
+                    }
+                }
+            } else {
+                oleada++;
+                generarOleadaEnemigos();
+            }
+
+            // --- COLISIONES ---
+            for (let i = proyectilesJugador.length - 1; i >= 0; i--) {
+                let p = proyectilesJugador[i];
+                let rectP = p.obtenerRect();
+                let balaConsumida = false;
+
+                if (jefeActual instanceof JefeSector3 && jefeActual.espejoActivo) {
+                    let rectEspejo = { x: jefeActual.x - 10, y: jefeActual.y + 60, ancho: jefeActual.ancho + 20, alto: 8 };
+                    if (colisiona(rectP, rectEspejo)) {
+                        if (Math.random() < 0.35) {
+                            p.esEnemigo = true; p.reflejado = true; p.color = "#ffff00";
+                            proyectilesEnemigos.push(p);
+                        }
+                        proyectilesJugador.splice(i, 1);
+                        continue;
+                    }
+                }
+
+                for (let j = powerups.length - 1; j >= 0; j--) {
+                    let pw = powerups[j];
+                    if (colisiona(rectP, pw.obtenerRect())) {
+                        if (pw.tipo === "triple") jugador.tiempoTriple = 450;
+                        else if (pw.tipo === "escudo") jugador.escudo = true;
+                        else if (pw.tipo === "velocidad") jugador.tiempoVelocidad = 450;
+                        else if (pw.tipo === "teledirigido") jugador.tiempoTeledirigido = 450;
+
+                        crearExplosion(pw.x + pw.ancho/2, pw.y + pw.alto/2, "#00ffff", 10, 3);
+                        powerups.splice(j, 1);
+                        balaConsumida = true;
+                        break;
+                    }
+                }
+                if (balaConsumida) { proyectilesJugador.splice(i, 1); continue; }
+
+                if (jefeActual !== null) {
+                    if (jefeActual instanceof JefePrismaRebotador && jefeActual.dividido) {
+                        for (let mj of jefeActual.romboJefes) {
+                            if (colisiona(rectP, mj.obtenerRect())) {
+                                mj.vida -= 1; mj.flashHitFrames = 4;
+                                proyectilesJugador.splice(i, 1);
+                                if (mj.vida <= 0) {
+                                    crearExplosion(mj.x + mj.ancho/2, mj.y + mj.alto/2, mj.color, 15, 3);
+                                }
+                                balaConsumida = true;
+                                break;
+                            }
+                        }
+                        jefeActual.romboJefes = jefeActual.romboJefes.filter(mj => mj.vida > 0);
+                        if (jefeActual.romboJefes.length === 0) {
+                            jefeActual = null; oleada++; generarOleadaEnemigos();
+                        }
+                        if (balaConsumida) continue;
+                    }
+
+                    if (colisiona(rectP, jefeActual.obtenerRect())) {
+                        jefeActual.vida -= 1; jefeActual.flashHitFrames = 4;
+                        proyectilesJugador.splice(i, 1);
+
+                        if (jefeActual.vida <= 0) {
+                            puntuacion += 800;
+                            crearExplosion(jefeActual.x + jefeActual.ancho/2, jefeActual.y + jefeActual.alto/2, jefeActual.color || "#ff0000", 30, 4);
+                            activar_shake(15, 8);
+
+                            if (jefeActual instanceof JefePrismaRebotador && !jefeActual.dividido) {
+                                jefeActual.dividirJefe();
+                            } else {
+                                jefeActual = null; oleada++; generarOleadaEnemigos();
+                            }
+                        }
+                        continue;
+                    }
+                }
+
+                let impactoEnemigo = false;
+                for (let j = enemigos.length - 1; j >= 0; j--) {
+                    let e = enemigos[j];
+                    if (colisiona(rectP, e.obtenerRect())) {
+                        e.vida -= 1; e.flashHitFrames = 4;
+                        if (e.vida <= 0) {
+                            puntuacion += e.puntos;
+                            crearExplosion(e.x + e.ancho/2, e.y + e.alto/2, e.color, 8, 2);
+                            enemigos.splice(j, 1);
+                        }
+                        impactoEnemigo = true;
+                        break;
+                    }
+                }
+                if (impactoEnemigo) proyectilesJugador.splice(i, 1);
+            }
+
+            for (let i = proyectilesEnemigos.length - 1; i >= 0; i--) {
+                let p = proyectilesEnemigos[i];
+                if (colisiona(p.obtenerRect(), jugador.obtenerRect())) {
+                    proyectilesEnemigos.splice(i, 1);
+                    crearExplosion(p.x, p.y, "#ff3232", 5, 2);
+                    if (jugador.escudo) {
+                        jugador.escudo = false; activar_shake(8, 3);
+                    } else {
+                        jugador.vidas -= 1; activar_shake(15, 6);
+                    }
+                    break;
+                }
+            }
+        }
+
+        // --- RENDERIZADO VISUAL CON SCREEN SHAKE ---
+        ctx.save();
+        let offsetX = 0, offsetY = 0;
+        if (shakeFrames > 0) {
+            offsetX = Math.floor(Math.random() * (intensidadShake * 2 + 1)) - intensidadShake;
+            offsetY = Math.floor(Math.random() * (intensidadShake * 2 + 1)) - intensidadShake;
+            shakeFrames--;
+        }
+        ctx.translate(offsetX, offsetY);
+
+        ctx.fillStyle = "#0a0a0f";
+        ctx.fillRect(-10, -10, ANCHO + 20, ALTO + 20);
+
+        for (let est of estrellas) {
+            ctx.fillStyle = `rgb(${est.brillo}, ${est.brillo}, ${est.brillo})`;
+            ctx.fillRect(est.x, est.y, 1, 1);
+        }
+
+        for (let pt of particulas) {
+            ctx.fillStyle = pt.color;
+            ctx.beginPath(); ctx.arc(pt.x, pt.y, pt.radio, 0, Math.PI * 2); ctx.fill();
+        }
+
+        if (estadoPantalla === 1) {
+            ctx.restore();
+            dibujarTopRanking();
+            requestAnimationFrame(bucleJuego);
+            return;
+        } else if (estadoPantalla === 2) {
+            ctx.restore();
+            dibujarHistorialCompleto();
+            requestAnimationFrame(bucleJuego);
+            return;
+        }
+
+        for (let pw of powerups) pw.dibujar();
+        for (let p of proyectilesJugador) p.dibujar();
+        for (let p of proyectilesEnemigos) p.dibujar();
+        
+        if (jefeActual !== null) jefeActual.dibujar();
+        else for (let e of enemigos) e.dibujar();
+
+        jugador.dibujar();
+
+        ctx.restore();
+
+        // --- ANIMACIÓN VISUAL DE ADVERTENCIA DE GRAVEDAD ---
+        if (gravedadAdvertenciaFrames > 0) {
+            gravedadAdvertenciaFrames--;
+            let alphaVal = (gravedadAdvertenciaFrames / 120);
+            ctx.save();
+            ctx.fillStyle = `rgba(255, 0, 128, ${alphaVal})`;
+            ctx.font = "bold 24px 'Courier New'";
+            ctx.textAlign = "center";
+            
+            if (gravedadMensajeTipo === "DERECHA") {
+                ctx.fillText(">> ANOMALÍA GRAVITACIONAL DERECHA >>", ANCHO / 2, ALTO / 2 - 20);
+            } else if (gravedadMensajeTipo === "IZQUIERDA") {
+                ctx.fillText("<< ANOMALÍA GRAVITACIONAL IZQUIERDA <<", ANCHO / 2, ALTO / 2 - 20);
+            } else if (gravedadMensajeTipo === "INACTIVA") {
+                ctx.fillText("~ GRAVEDAD ESTABILIZADA ~", ANCHO / 2, ALTO / 2 - 20);
+            }
+            ctx.restore();
+        }
+
+        // HUD Fijo Superior limpio
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 16px 'Courier New'";
+        ctx.textAlign = "left";
+        ctx.fillText(`VIDAS: ${'V '.repeat(Math.max(0, jugador.vidas))} | OLEADA: ${oleada} | PUNTOS: ${puntuacion}`, 20, 30);
+
+        ctx.fillStyle = "#58a6ff";
+        ctx.font = "12px 'Courier New'";
+        ctx.textAlign = "right";
+        ctx.fillText("Pulse [TAB] Menús", ANCHO - 20, 30);
+        ctx.textAlign = "left";
+
+        if (oleada >= 4 && ![3,6,9,12,15].includes(oleada) && jefeActual === null && gravedadAdvertenciaFrames <= 0) {
+            let textoGrav = "GRAVEDAD INACTIVA";
+            if (direccionGravedad > 0) textoGrav = "GRAVEDAD >> DERECHA";
+            else if (direccionGravedad < 0) textoGrav = "GRAVEDAD << IZQUIERDA";
+            
+            ctx.fillStyle = "#ff0080";
+            ctx.textAlign = "right";
+            ctx.fillText(textoGrav, ANCHO - 150, 30);
+            ctx.textAlign = "left";
+        }
+
+        let estadoActivoTxt = [];
+        if (jugador.tiempoTriple > 0) estadoActivoTxt.push("TRIPLE [3]");
+        if (jugador.tiempoVelocidad > 0) estadoActivoTxt.push("VELOCIDAD [V]");
+        if (jugador.tiempoTeledirigido > 0) estadoActivoTxt.push("TELEDIRIGIDO [T]");
+        if (jugador.escudo) estadoActivoTxt.push("ESCUDO [E]");
+
+        if (estadoActivoTxt.length > 0) {
+            ctx.fillStyle = "#00ffc8";
+            ctx.font = "bold 14px 'Courier New'";
+            ctx.fillText(`ACTIVOS: ${estadoActivoTxt.join(" | ")}`, 20, ALTO - 20);
+        }
+
+        if (jugador.vidas <= 0 && modalFirebase.style.display !== "block" && !scoreYaGuardadoEnPartida) {
+            scoreYaGuardadoEnPartida = true;
+            modalFirebase.style.display = "block";
+            inputIniciales.focus();
+        }
+
+        if (jugador.vidas > 0) {
+            requestAnimationFrame(bucleJuego);
+        } else {
+            // Pantalla de Game Over en bucle mientras se guarda el score
+            ctx.fillStyle = "rgba(0, 0, 0, 0.85)";
+            ctx.fillRect(0, 0, ANCHO, ALTO);
+            ctx.fillStyle = "#dc143c";
+            ctx.font = "bold 42px 'Courier New'";
+            ctx.textAlign = "center";
+            ctx.fillText("GAME OVER", ANCHO / 2, ALTO / 2 - 35);
+            ctx.fillStyle = "#ffffff";
+            ctx.font = "bold 20px 'Courier New'";
+            ctx.fillText(`Puntuación Final: ${puntuacion} pts`, ANCHO / 2, ALTO / 2 + 5);
+            ctx.fillText("Pulsa 'R' para reiniciar", ANCHO / 2, ALTO / 2 + 40);
+            ctx.textAlign = "left";
+
+            if (teclas["r"] || teclas["R"]) {
+                jugador.vidas = 3;
+                puntuacion = 0;
+                oleada = 1;
+                generarOleadaEnemigos();
+                requestAnimationFrame(bucleJuego);
+            } else {
+                requestAnimationFrame(bucleJuego);
+            }
+        }
+    }
+
+    function dibujarTopRanking() {
+        ctx.fillStyle = "rgba(13, 17, 23, 0.96)";
+        ctx.fillRect(0, 0, ANCHO, ALTO);
+
+        ctx.fillStyle = "#58a6ff";
+        ctx.font = "bold 26px 'Courier New'";
+        ctx.textAlign = "center";
+        ctx.fillText("🏆 TOP 10 MEJORES PUNTUACIONES (SHOOTER)", ANCHO / 2, 50);
+
+        ctx.fillStyle = "#8b949e";
+        ctx.font = "13px 'Courier New'";
+        ctx.fillText("[TAB] Cambiar a Historial Completo  |  [TAB o Cualquier tecla] Volver al juego", ANCHO / 2, 78);
+
+        ctx.fillStyle = "#30363d";
+        ctx.fillRect(50, 105, ANCHO - 100, 30);
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 13px 'Courier New'";
+        ctx.textAlign = "left";
+        ctx.fillText("POS", 70, 125);
+        ctx.fillText("INICIALES", 160, 125);
+        ctx.textAlign = "right";
+        ctx.fillText("PUNTOS", ANCHO - 70, 125);
+
+        if (topRankingGlobal.length === 0) {
+            ctx.textAlign = "center";
+            ctx.fillStyle = "#8b949e";
+            ctx.font = "15px 'Courier New'";
+            ctx.fillText("Cargando registros...", ANCHO / 2, ALTO / 2);
+        } else {
+            topRankingGlobal.forEach((item, index) => {
+                let yPos = 160 + (index * 33);
+                if (index % 2 === 0) {
+                    ctx.fillStyle = "rgba(255, 255, 255, 0.03)";
+                    ctx.fillRect(50, yPos - 20, ANCHO - 100, 28);
+                }
+
+                ctx.fillStyle = index === 0 ? "#ffd700" : (index === 1 ? "#c0c0c0" : (index === 2 ? "#cd7f32" : "#ffffff"));
+                ctx.font = "bold 14px 'Courier New'";
+                ctx.textAlign = "left";
+                ctx.fillText(`${index + 1}.`, 70, yPos);
+                ctx.fillText(item.iniciales || "AAA", 160, yPos);
+                
+                ctx.textAlign = "right";
+                ctx.fillStyle = "#58a6ff";
+                ctx.fillText(`${item.puntos} pts`, ANCHO - 70, yPos);
+            });
+        }
+        ctx.textAlign = "left";
+        requestAnimationFrame(bucleJuego);
+    }
+
+    function dibujarHistorialCompleto() {
+        ctx.fillStyle = "rgba(13, 17, 23, 0.96)";
+        ctx.fillRect(0, 0, ANCHO, ALTO);
+
+        ctx.fillStyle = "#3fb950";
+        ctx.font = "bold 26px 'Courier New'";
+        ctx.textAlign = "center";
+        ctx.fillText("📜 HISTORIAL COMPLETO (SHOOTER)", ANCHO / 2, 50);
+
+        ctx.fillStyle = "#8b949e";
+        ctx.font = "13px 'Courier New'";
+        ctx.fillText("[TAB] Cambiar a Top 10  |  [TAB o Cualquier tecla] Volver al juego", ANCHO / 2, 78);
+
+        ctx.fillStyle = "#30363d";
+        ctx.fillRect(40, 105, ANCHO - 80, 30);
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 12px 'Courier New'";
+        ctx.textAlign = "left";
+        ctx.fillText("FECHA Y HORA", 55, 125);
+        ctx.fillText("INICIALES", 270, 125);
+        ctx.textAlign = "right";
+        ctx.fillText("PUNTOS", ANCHO - 55, 125);
+
+        if (historialGlobal.length === 0) {
+            ctx.textAlign = "center";
+            ctx.fillStyle = "#8b949e";
+            ctx.font = "15px 'Courier New'";
+            ctx.fillText("Cargando historial...", ANCHO / 2, ALTO / 2);
+        } else {
+            historialGlobal.slice(0, 11).forEach((item, index) => {
+                let yPos = 160 + (index * 33);
+                if (index % 2 === 0) {
+                    ctx.fillStyle = "rgba(255, 255, 255, 0.03)";
+                    ctx.fillRect(40, yPos - 20, ANCHO - 80, 28);
+                }
+
+                let fechaStr = "Reciente";
+                if (item.fecha && item.fecha.toDate) {
+                    fechaStr = item.fecha.toDate().toLocaleString("es-ES", {
+                        day: '2-digit', month: '2-digit', year: 'numeric',
+                        hour: '2-digit', minute: '2-digit'
+                    });
+                }
+
+                ctx.fillStyle = "#ffffff";
+                ctx.font = "13px 'Courier New'";
+                ctx.textAlign = "left";
+                ctx.fillText(fechaStr, 55, yPos);
+                ctx.fillText(item.iniciales || "AAA", 280, yPos);
+                
+                ctx.textAlign = "right";
+                ctx.fillStyle = "#3fb950";
+                ctx.fillText(`${item.puntos} pts`, ANCHO - 55, yPos);
+            });
+
+            if (historialGlobal.length > 11) {
+                ctx.textAlign = "center";
+                ctx.fillStyle = "#8b949e";
+                ctx.font = "11px 'Courier New'";
+                ctx.fillText(`(Mostrando las últimas 11 de ${historialGlobal.length} partidas registradas)`, ANCHO / 2, ALTO - 20);
+            }
+        }
+        ctx.textAlign = "left";
+        requestAnimationFrame(bucleJuego);
+    }
+
+    requestAnimationFrame(bucleJuego);
+</script>
+
+</body>
+</html>
